@@ -1,0 +1,108 @@
+{% extends "admin/base.html" %}
+{% block title %}Email Health — ZyNi Admin{% endblock %}
+{% block page_title %}Email Health{% endblock %}
+
+{% block content %}
+
+<div class="adm-stats-grid">
+  <div class="adm-stat-card {{ 'green' if status.provider != 'none' else 'amber' }}">
+    <div class="adm-stat-label">Active Provider</div>
+    <div class="adm-stat-value {{ 'green' if status.provider != 'none' else 'amber' }}" style="font-size:20px">
+      {{ status.provider|title }}
+    </div>
+  </div>
+  <div class="adm-stat-card cyan">
+    <div class="adm-stat-label">Sent (24h)</div>
+    <div class="adm-stat-value cyan">{{ counts.last_24h if counts.last_24h is defined else '—' }}</div>
+  </div>
+  <div class="adm-stat-card blue">
+    <div class="adm-stat-label">Total Codes</div>
+    <div class="adm-stat-value blue">{{ counts.total if counts.total is defined else '—' }}</div>
+  </div>
+  <div class="adm-stat-card amber">
+    <div class="adm-stat-label">Fallback SMTP</div>
+    <div class="adm-stat-value amber" style="font-size:20px">{{ 'Ready' if status.smtp else 'Off' }}</div>
+  </div>
+</div>
+
+<div class="adm-card">
+  <div class="adm-card-header">
+    <div class="adm-card-title">Provider Configuration</div>
+    <a href="/admin/test-email" class="btn btn-primary btn-sm" target="_blank" rel="noopener">Run Diagnostic →</a>
+  </div>
+  <div class="adm-card-body">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px;margin-bottom:16px">
+      <div style="background:#04090f;border:1px solid var(--border);border-radius:8px;padding:14px">
+        <div style="font-size:9.5px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Resend API Key</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:12.5px">
+          {% if status.resend_key %}<span style="color:var(--green)">● Configured</span>
+          {% else %}<span style="color:var(--red)">● Missing</span>{% endif %}
+        </div>
+      </div>
+      <div style="background:#04090f;border:1px solid var(--border);border-radius:8px;padding:14px">
+        <div style="font-size:9.5px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Gmail SMTP</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:12.5px">
+          {% if status.smtp %}<span style="color:var(--green)">● Configured</span>
+          {% else %}<span style="color:var(--muted)">● Not set</span>{% endif %}
+        </div>
+      </div>
+      <div style="background:#04090f;border:1px solid var(--border);border-radius:8px;padding:14px">
+        <div style="font-size:9.5px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">From Address</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--cyan);word-break:break-all">
+          {{ status.from or '—' }}
+        </div>
+      </div>
+    </div>
+
+    {% if status.provider == 'none' %}
+    <div class="adm-flash error" style="margin-bottom:0">
+      <span class="adm-flash-icon">✕</span>
+      <span>No email provider is configured. Verification and 2FA codes cannot be delivered.
+            Set <code>RESEND_API_KEY</code>, or <code>GMAIL_USER</code> + <code>GMAIL_APP_PASSWORD</code>.</span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="adm-card">
+  <div class="adm-card-header"><div class="adm-card-title">Deliverability Checklist</div></div>
+  <div class="adm-card-body">
+    <ul style="font-size:12px;color:var(--muted);line-height:1.9;padding-left:18px;margin:0">
+      <li>SPF, DKIM and DMARC records verified on the sending domain.</li>
+      <li>DMARC policy at <code style="color:var(--cyan)">p=quarantine</code> or stronger once alignment is confirmed.</li>
+      <li>Domain registered with Google Postmaster Tools to track Gmail reputation.</li>
+      <li>Transactional mail sends no <code style="color:var(--cyan)">List-Unsubscribe</code> header — that signals bulk mail.</li>
+      <li>Every message ships a plain-text alternative alongside the HTML part.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="adm-card">
+  <div class="adm-card-header">
+    <div class="adm-card-title">Recent Verification Codes</div>
+    <div style="font-size:10.5px;color:var(--muted)">Codes are never displayed</div>
+  </div>
+  <div class="adm-table-wrap scroll">
+    <table class="adm-table">
+      <thead><tr><th>Created</th><th>User</th><th>Email</th><th>State</th></tr></thead>
+      <tbody>
+        {% for r in recent %}
+        <tr>
+          <td style="color:var(--muted);font-size:11px;white-space:nowrap;font-family:'JetBrains Mono',monospace">{{ r.created }}</td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--cyan)">{{ r.user }}</td>
+          <td style="font-size:11px;color:var(--muted)">{{ r.email }}</td>
+          <td>
+            {% if r.used %}<span class="badge green">used</span>
+            {% elif r.expired %}<span class="badge red">expired</span>
+            {% else %}<span class="badge amber">pending</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="adm-empty">No verification codes on record.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

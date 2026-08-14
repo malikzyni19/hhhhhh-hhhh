@@ -11,7 +11,7 @@
   <div class="adm-card-header">
     <div class="adm-card-title">Maintenance Mode</div>
     <label class="toggle-wrap">
-      <input type="checkbox" name="maintenance_mode" value="true" id="maintToggle"
+      <input type="checkbox" value="true" id="maintToggle"
              {% if cfg.maintenance_mode == 'true' %}checked{% endif %}
              onchange="document.getElementById('maintValue').value=this.checked?'true':'false'">
       <input type="hidden" name="maintenance_mode" id="maintValue" value="{{ cfg.maintenance_mode }}">
@@ -27,32 +27,11 @@
   </div>
 </div>
 
-<!-- ── 2. GUEST SETTINGS ── -->
+<!-- ── 2. DEFAULTS ── -->
 <div class="adm-card" style="margin-bottom:20px">
-  <div class="adm-card-header">
-    <div class="adm-card-title">Guest Access</div>
-    <label class="toggle-wrap">
-      <input type="checkbox" name="allow_guest_access" value="true" id="guestToggle"
-             {% if cfg.allow_guest_access != 'false' %}checked{% endif %}
-             onchange="document.getElementById('guestValue').value=this.checked?'true':'false'">
-      <input type="hidden" name="allow_guest_access" id="guestValue" value="{{ cfg.allow_guest_access }}">
-      <span class="toggle-slider"></span>
-    </label>
-  </div>
+  <div class="adm-card-header"><div class="adm-card-title">Defaults</div></div>
   <div class="adm-card-body">
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px">
-      <div class="adm-field">
-        <label>Guest Tokens / Day</label>
-        <input type="number" name="max_guest_tokens" value="{{ cfg.max_guest_tokens }}" min="0" max="9999"/>
-      </div>
-      <div class="adm-field">
-        <label>Session Limit (hours)</label>
-        <input type="number" name="guest_session_hours" value="{{ cfg.guest_session_hours }}" min="1" max="72"/>
-      </div>
-      <div class="adm-field">
-        <label>Auto-expire (days)</label>
-        <input type="number" name="guest_expire_days" value="{{ cfg.guest_expire_days }}" min="1" max="365"/>
-      </div>
       <div class="adm-field">
         <label>Default Exchange</label>
         <select name="default_exchange">
@@ -79,15 +58,39 @@
          style="display:inline-flex;align-items:center;gap:8px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);color:var(--blue);padding:10px 18px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:700;letter-spacing:.5px">
         👤 User Role →
       </a>
-      <a href="{{ url_for('admin.role_edit', role='guest') }}"
-         style="display:inline-flex;align-items:center;gap:8px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);color:var(--amber);padding:10px 18px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:700;letter-spacing:.5px">
-        👥 Guest Role →
-      </a>
     </div>
   </div>
 </div>
 
-<!-- ── 4. SYSTEM INFO ── -->
+<!-- ── 4. RATE LIMITS ── -->
+<div class="adm-card" style="margin-bottom:20px">
+  <div class="adm-card-header"><div class="adm-card-title">Rate Limits &amp; Abuse Control</div></div>
+  <div class="adm-card-body">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px">
+      <div class="adm-field">
+        <label>Scans / Hour (per user)</label>
+        <input type="number" name="rl_scans_per_hour" value="{{ cfg.rl_scans_per_hour }}" min="1" max="10000"/>
+      </div>
+      <div class="adm-field">
+        <label>AI Calls / Day (per user)</label>
+        <input type="number" name="rl_ai_calls_per_day" value="{{ cfg.rl_ai_calls_per_day }}" min="0" max="10000"/>
+      </div>
+      <div class="adm-field">
+        <label>Failed Logins Before Lock</label>
+        <input type="number" name="rl_login_attempts" value="{{ cfg.rl_login_attempts }}" min="1" max="50"/>
+      </div>
+      <div class="adm-field">
+        <label>Signups / IP / Day</label>
+        <input type="number" name="rl_signup_per_ip_day" value="{{ cfg.rl_signup_per_ip_day }}" min="1" max="100"/>
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px">
+      Stored in <code style="color:var(--cyan)">GlobalSetting</code>. Read these at your enforcement points via <code style="color:var(--cyan)">_get_setting()</code>.
+    </div>
+  </div>
+</div>
+
+<!-- ── 5. SYSTEM INFO ── -->
 <div class="adm-card" style="margin-bottom:28px">
   <div class="adm-card-header">
     <div class="adm-card-title">System Info</div>

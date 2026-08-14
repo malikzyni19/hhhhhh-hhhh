@@ -1,0 +1,90 @@
+{% extends "admin/base.html" %}
+{% block title %}Exchanges — ZyNi Admin{% endblock %}
+{% block page_title %}Exchange &amp; Feed Control{% endblock %}
+
+{% block content %}
+
+<form method="POST">
+
+<div class="adm-card">
+  <div class="adm-card-header"><div class="adm-card-title">Exchange Feeds</div></div>
+  <div class="adm-card-body">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.6">
+      Turn an exchange off to stop its websocket loop from connecting. Use this when a venue is
+      misbehaving — rate-limiting, sending malformed frames, or driving up bandwidth — without redeploying.
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px">
+      {% for ex in exchanges %}
+      <label class="sw-row">
+        <div>
+          <div class="sw-name">{{ ex|title }}</div>
+          <div class="sw-sub">{{ 'Mark price · liquidations · delta' if ex == 'binance' else 'Order book · trades' }}</div>
+        </div>
+        <input type="checkbox" name="ex_{{ ex }}" value="true" {% if cfg[ex] != 'false' %}checked{% endif %}>
+        <span class="sw"></span>
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="adm-card">
+  <div class="adm-card-header"><div class="adm-card-title">Data Streams</div></div>
+  <div class="adm-card-body">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.6">
+      Individual stream types. The <strong style="color:var(--amber)">delta</strong> feed (aggregate trades)
+      is by far the highest-volume stream — disabling it cuts the most bandwidth.
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px">
+      {% for f, label, sub in [
+          ('markprice',   'Mark Price',   '1 update/sec per symbol'),
+          ('liquidations','Liquidations', 'Low volume, event-driven'),
+          ('delta',       'Delta / AggTrade', 'Very high volume')] %}
+      <label class="sw-row">
+        <div>
+          <div class="sw-name">{{ label }}</div>
+          <div class="sw-sub">{{ sub }}</div>
+        </div>
+        <input type="checkbox" name="feed_{{ f }}" value="true" {% if feeds[f] != 'false' %}checked{% endif %}>
+        <span class="sw"></span>
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="adm-card" style="border-color:rgba(245,158,11,.25)">
+  <div class="adm-card-body">
+    <div style="font-size:12px;color:var(--muted);line-height:1.7">
+      <strong style="color:var(--amber)">Wiring note.</strong> These toggles persist to
+      <code style="color:var(--cyan)">GlobalSetting</code> as
+      <code style="color:var(--cyan)">exchange_enabled_&lt;name&gt;</code> and
+      <code style="color:var(--cyan)">feed_enabled_&lt;name&gt;</code>.
+      Each websocket loop in <code style="color:var(--cyan)">main.py</code> must read its flag at the top of
+      its reconnect cycle and skip connecting when the value is <code style="color:var(--cyan)">"false"</code>.
+      Until that check is added, saving here records the intent but does not stop the loop.
+    </div>
+  </div>
+</div>
+
+<div style="position:sticky;bottom:0;padding:16px 0;background:var(--bg);border-top:1px solid var(--border);display:flex;gap:12px;z-index:10">
+  <button type="submit" class="btn btn-primary" style="padding:11px 24px;font-size:12.5px">Save Exchange Settings</button>
+  <a href="{{ url_for('admin.dashboard') }}" class="btn btn-ghost" style="padding:11px 20px">Cancel</a>
+</div>
+
+</form>
+
+<style>
+.sw-row{display:flex;align-items:center;justify-content:space-between;gap:12px;background:#04090f;
+        border:1px solid var(--border);border-radius:9px;padding:13px 15px;cursor:pointer;position:relative;transition:border-color .15s}
+.sw-row:hover{border-color:var(--muted2)}
+.sw-name{font-size:12.5px;font-weight:600;color:var(--text);margin-bottom:3px}
+.sw-sub{font-size:10.5px;color:var(--muted)}
+.sw-row input{position:absolute;opacity:0;width:0;height:0}
+.sw{position:relative;width:40px;height:22px;border-radius:22px;background:#1a2e40;flex-shrink:0;transition:.2s}
+.sw::before{content:'';position:absolute;width:16px;height:16px;left:3px;top:3px;background:#64748b;border-radius:50%;transition:.2s}
+.sw-row input:checked ~ .sw{background:rgba(34,211,238,.25);box-shadow:inset 0 0 0 1px rgba(34,211,238,.4)}
+.sw-row input:checked ~ .sw::before{transform:translateX(18px);background:var(--cyan)}
+</style>
+
+{% endblock %}

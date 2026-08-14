@@ -1346,6 +1346,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           <option value="bybit">Bybit</option>
           <option value="okx">OKX</option>
           <option value="mexc">MEXC</option>
+          <option value="upbit">Upbit</option>
         </select>
         <span class="ex-select-arrow">▾</span>
       </div>
@@ -1382,6 +1383,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     <button class="tab" onclick="showPage('pairs',this)">📋 PAIRS</button>
     <button class="tab" onclick="showPage('settings',this)">⚙️ SETTINGS</button>
     <button class="tab" onclick="showPage('compressed',this)">📦 COMPRESSED</button>
+    <button class="tab" onclick="showPage('base',this)">🧱 ACCUMULATION</button>
     <button class="tab" onclick="showPage('trending',this)">🔥 TRENDING</button>
     <button class="tab" onclick="showPage('athatl',this)">🏆 ATH / ATL</button>
     <button class="tab" onclick="showPage('bias',this)">🎯 BIAS SHIFT</button>
@@ -1839,6 +1841,31 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       </div>
       <button class="btn-primary" onclick="scanCompressed()" style="margin-top:4px">▶ SCAN COMPRESSED</button>
       <div id="compressedResults" class="results" style="margin-top:12px"><div class="empty">Click Scan Compressed to begin</div></div>
+    </div>
+  </div>
+
+  <!-- ACCUMULATION BASE PAGE -->
+  <div id="page-base" class="page">
+    <div class="card">
+      <div class="card-title">ACCUMULATION BASE</div>
+      <div style="font-size:10px;color:var(--text-muted);margin-bottom:10px;line-height:1.5">
+        Long post-capitulation bases and their breakouts — daily / weekly only.
+        Binance &amp; MEXC only: OKX (300) and Bybit (200) cap kline history below what a multi-month base needs.
+      </div>
+      <div class="row3">
+        <div class="field"><label>Timeframe</label><select id="baseTf"><option value="1d" selected>1d</option><option value="1w">1w · Binance</option></select></div>
+        <div class="field"><label>Base Window</label><input id="baseWindow" type="number" value="180" min="40" max="600"></div>
+        <div class="field"><label>Min Drawdown %</label><input id="baseMinDrawdown" type="number" step="1" value="60"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Max Drift %</label><input id="baseMaxDrift" type="number" step="1" value="25"></div>
+        <div class="field"><label>Max Breakout Age</label><input id="baseMaxBreakAge" type="number" value="30" min="0" max="200"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Pairs / Cycle</label><input id="basePairsPerCycle" type="number" value="40" min="1" max="200"></div>
+      </div>
+      <button class="btn-primary" onclick="scanBase()" style="margin-top:4px">▶ SCAN BASES</button>
+      <div id="baseResults" class="results" style="margin-top:12px"><div class="empty">Click Scan Bases to begin</div></div>
     </div>
   </div>
 
@@ -3253,6 +3280,106 @@ async function scanCompressed(){
   } finally { hideScanPopup(); }
 }
 
+// ── Accumulation Base ──
+function baseStatusLabel(s){
+  const m={
+    'fresh_breakout':'🚀 Fresh Breakout',
+    'breakout_holding':'✅ Breakout Holding',
+    'testing_base_high':'⤴ Testing Base High',
+    'basing':'⬛ Basing',
+    'breakdown':'⤵ Breakdown',
+  };
+  return m[s]||s||'—';
+}
+function baseStatusClass(s){
+  if(s==='fresh_breakout'||s==='breakout_holding') return 'bull';
+  if(s==='breakdown') return 'bear';
+  if(s==='testing_base_high') return 'warn';
+  return 'neutral';
+}
+function baseAtrLabel(s){
+  const m={'strong_contraction':'ATR ↓↓ Contracted','contracting':'ATR ↓ Contracting','normal':'ATR Normal','expanding':'ATR ↑ Expanding','unknown':'ATR ?'};
+  return m[s]||s||'—';
+}
+function baseAtrClass(s){
+  if(s==='strong_contraction'||s==='contracting') return 'bull';
+  if(s==='expanding') return 'warn';
+  return 'neutral';
+}
+
+async function scanBase(){
+  showScanPopup('SCANNING BASES');
+  $('baseResults').innerHTML = '<div class="empty">Scanning...</div>';
+  const payload = {
+    timeframe: $('baseTf').value,
+    baseWindow: +$('baseWindow').value,
+    minDrawdownPct: +$('baseMinDrawdown').value,
+    maxDriftPct: +$('baseMaxDrift').value,
+    maxBreakoutAge: +$('baseMaxBreakAge').value,
+    pairsPerCycle: +$('basePairsPerCycle').value || 40,
+    roundRobin: true,
+    symbols: [...selectedPairs],
+    market: marketType(),
+    exchange: currentExchange()
+  };
+  try {
+    const res = await fetch('/api/base_scan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const data = await res.json();
+    if(data && data.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(); return; }
+    if(data && data.error){ $('baseResults').innerHTML = `<div class="empty">Scan error: ${data.message || data.error}</div>`; return; }
+    const attemptedCount = data?.scanned || (payload.symbols?.length || 80);
+    if(window.refreshTokensAfterScan) window.refreshTokensAfterScan(attemptedCount);
+    const rows = Array.isArray(data) ? data : (data.results || []);
+    const scanTime = new Date().toLocaleTimeString();
+    const exch = data?.exchange || payload.exchange;
+    const mkt = data?.market || payload.market;
+    const summaryHtml = data?.scanned != null
+      ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">Scanned ${data.scanned} pairs · ${data.errors || 0} errors · ${data.timeframe || ''} · window ${data.baseWindow || ''}</div>` : '';
+    $('baseResults').innerHTML = rows.length
+      ? summaryHtml + rows.map((x,i) => {
+          const starred = isStarred(x.symbol);
+          const tvSym = tvSymbolFor(exch, mkt, x.symbol);
+          const scoreHtml = typeof x.setupScore==='number'
+            ? `<span style="font-size:10px;font-weight:700;color:var(--accent);margin-left:2px">${x.setupScore}</span>` : '';
+          const confHtml = x.confidence
+            ? `<span class="badge ${x.confidence==='High'?'bull':x.confidence==='Medium'?'warn':'neutral'}" style="font-size:9px${(x.confidence==='Low'||x.confidence==='Weak')?';opacity:.55':''}">${x.confidence}</span>` : '';
+          const flagHtml = (x.flags&&x.flags.length)
+            ? `<div class="result-detail" style="font-size:10px;opacity:.6">⚠ ${x.flags.join(' · ')}</div>` : '';
+          const gradeHtml = x.baseGrade ? `<span class="badge ${compressedGradeClass(x.baseGrade)}" style="font-size:9px">${x.baseGrade}</span>` : '';
+          const statusHtml = x.status ? `<span class="badge ${baseStatusClass(x.status)}" style="font-size:9px">${baseStatusLabel(x.status)}</span>` : '';
+          const atrHtml = x.atrState ? `<span class="badge ${baseAtrClass(x.atrState)}" style="font-size:9px">${baseAtrLabel(x.atrState)}</span>` : '';
+          const volHtml = x.volumeState ? `<span class="badge ${volumeStateBadgeClass(x.volumeState)}" style="font-size:9px">${volumeStateLabel(x.volumeState)}</span>` : '';
+          const brkLine = (x.breakoutBarsAgo != null)
+            ? `<div class="result-detail" style="font-size:10px">Broke out ${x.breakoutBarsAgo} bar${x.breakoutBarsAgo===1?'':'s'} ago · +${fmtP(x.excursionPct)}% above band${x.breakoutVolumeRatio!=null?' · vol '+x.breakoutVolumeRatio+'×':''}</div>`
+            : '';
+          const ageLine = x.baseEndBarsAgo > 0
+            ? `<div class="result-detail" style="font-size:10px;opacity:.7">Base measured to ${x.baseEndBarsAgo} bars ago</div>` : '';
+          return `<div class="result-card" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
+            <div class="result-header">
+              <span class="symbol">${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<a href="https://www.tradingview.com/chart/?symbol=${tvSym}" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
+              <span style="display:flex;align-items:center;gap:4px">
+                <span class="price-tag">${x.timeframe}${renderSparkline(x.sparkline, x.sparklineMarkers)}</span>
+                ${scoreHtml}
+                <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${x.symbol}')">${starred?'★':'☆'}</span>
+              </span>
+            </div>
+            <div class="badges">${confHtml}${statusHtml}${gradeHtml}${atrHtml}${volHtml}</div>
+            <div class="result-details">
+              <div class="result-detail">Band ${fmtPx(x.baseLow)} – ${fmtPx(x.baseHigh)} | Mid ${fmtPx(x.baseMid)} | Width ${fmtP(x.baseWidthPct,1)}%</div>
+              <div class="result-detail">Position ${fmtP(x.pricePositionPct,1)}% | ↑ ${fmtP(x.distanceToBaseHighPct)}% ↓ ${fmtP(x.distanceToBaseLowPct)}%</div>
+              <div class="result-detail">Drawdown ${fmtP(x.drawdownFromHighPct,1)}% from ${fmtPx(x.windowHigh)}</div>
+              <div class="result-detail" style="font-size:10px;opacity:.8">Drift ${fmtP(x.driftPct,1)}% · ${x.midCrossings} mid-crossings · touches ${x.upperTouches}↑/${x.lowerTouches}↓</div>
+              ${brkLine}${ageLine}${flagHtml}
+              <div class="scan-time">Scanned: ${scanTime}</div>
+            </div>
+          </div>`;
+        }).join('')
+      : summaryHtml + '<div class="empty">No accumulation bases found</div>';
+  } catch(err) {
+    $('baseResults').innerHTML = `<div class="empty">Base scan failed: ${err.message || err}</div>`;
+  } finally { hideScanPopup(); }
+}
+
 // ── Trending ──
 async function scanTrending(){
   if(window.mobileTfGuard && !window.mobileTfGuard($('trendingTf').value, 'Timeframe ' + $('trendingTf').value)) return;
@@ -3410,6 +3537,7 @@ const SAVE_IDS_VAL = [
   'btcCorrelationMode','btcLookback',
   'scanSource','pairsPerCycle','autoInterval','marketType',
   'compressedTf','compressedLookback','compressedMaxPct',
+  'baseTf','baseWindow','baseMinDrawdown','baseMaxDrift','baseMaxBreakAge','basePairsPerCycle',
   'trendingTf','trendingMode','trendingLimit',
   'athMode','athStatus','athWindowHours','athBreakTolPct','athNearPct','athLimit',
   'tvLinkTarget',
@@ -6900,6 +7028,7 @@ document.addEventListener('DOMContentLoaded', function(){
     'pairs':      '📋 PAIRS',
     'settings':   '⚙️ SETTINGS',
     'compressed': '📦 COMPRESSED',
+    'base':       '🧱 ACCUMULATION',
     'trending':   '🔥 TRENDING',
     'athatl':     '🏆 ATH / ATL',
     'bias':       '🎯 BIAS SHIFT',

@@ -208,7 +208,7 @@ def _parse_ua(ua: str) -> dict:
 
 # ── Maintenance mode ────────────────────────────────────────────────
 _SKIP_MAINTENANCE_PATHS = ("/admin", "/static", "/api/", "/login",
-                           "/logout", "/guest", "/favicon")
+                           "/logout", "/favicon")
 
 # Cache maintenance settings for 60 s to avoid 2 DB queries on every HTTP request.
 _maint_cache: dict = {"mode": False, "message": "", "ts": 0.0}
@@ -290,17 +290,6 @@ _tab_controls: Dict[str, bool] = {
     "scan": True, "compressed": True, "trending": True,
     "ath_atl": True, "bias": True, "live_monitor": True
 }
-
-# ── Guest access system ──
-_guest_controls: Dict = {
-    "enabled": True,
-    "tabs": {"scan": True, "compressed": False, "trending": True, "ath_atl": False, "bias": False},
-    "max_scans_per_session": 5,
-    "max_pairs": 20,
-    "session_label": "Guest",
-}
-_guest_sessions: Dict[str, dict] = {}
-_guest_lock = threading.Lock()
 
 # ── App start time for uptime tracking ──
 _app_start_time = datetime.now(timezone.utc)
@@ -614,6 +603,22 @@ def _auto_migrate():
                 ))
                 conn.commit()
                 print("[MIGRATE] email_verified column ensured on users table")
+                # Subscription tiers: basic / pro / pro_plus
+                for _stmt in [
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "tier VARCHAR(20) NOT NULL DEFAULT 'basic'",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS tier_expires_at TIMESTAMP",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS tier_since TIMESTAMP",
+                ]:
+                    conn.execute(text(_stmt))
+                conn.commit()
+                print("[MIGRATE] tier columns ensured on users table")
+                conn.execute(text(
+                    "ALTER TABLE daily_token_usage ADD COLUMN IF NOT EXISTS "
+                    "ai_calls INTEGER NOT NULL DEFAULT 0"
+                ))
+                conn.commit()
+                print("[MIGRATE] ai_calls column ensured on daily_token_usage")
                 # Phase 10.8: OB Distance/Approach settings column on user_preferences
                 conn.execute(text(
                     "ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS "
@@ -703,6 +708,84 @@ def _auto_migrate():
                 print("[MIGRATE] Phase 11.13 paper_risk_guard_settings_json column ensured on user_preferences")
         except Exception as exc:
             print(f"[MIGRATE] Auto-migration warning: {exc}")
+
+        # Seed the tier_plans table with sane starting values. Existing rows are
+        # never overwritten — admins edit these from /admin/tiers.
+        try:
+            _seed_tier_plans()
+        except Exception as exc:
+            print(f"[MIGRATE] tier seed warning: {exc}")
+
+
+_TIER_SEED = {
+    "basic": {
+        "display_name": "Basic", "price_monthly": 0.0, "sort_order": 1,
+        "description": "Free plan — core scanning on Binance.",
+        "daily_tokens": 100, "max_pairs_per_scan": 30, "max_pairs_per_cycle": 20,
+        "max_live_monitor_items": 3, "ai_calls_per_day": 5, "max_scan_presets": 2,
+        "allowed_modules":    ["ob", "fvg"],
+        "allowed_tabs":       ["scan", "pairs", "settings"],
+        "allowed_exchanges":  ["binance"],
+        "allowed_timeframes": ["1h", "4h"],
+    },
+    "pro": {
+        "display_name": "Pro", "price_monthly": 29.0, "sort_order": 2,
+        "description": "All modules, multi-exchange, full timeframe range.",
+        "daily_tokens": 1000, "max_pairs_per_scan": 150, "max_pairs_per_cycle": 75,
+        "max_live_monitor_items": 25, "ai_calls_per_day": 50, "max_scan_presets": 10,
+        "allowed_modules":    ["ob", "fvg", "bb", "fib"],
+        "allowed_tabs":       ["scan", "pairs", "settings", "compressed", "trending", "bias", "watchlist"],
+        "allowed_exchanges":  ["binance", "bybit"],
+        "allowed_timeframes": ["15m", "30m", "1h", "4h", "1d"],
+    },
+    "pro_plus": {
+        "display_name": "Pro Plus", "price_monthly": 79.0, "sort_order": 3,
+        "description": "Everything unlocked, highest limits.",
+        "daily_tokens": 5000, "max_pairs_per_scan": 500, "max_pairs_per_cycle": 250,
+        "max_live_monitor_items": 100, "ai_calls_per_day": 300, "max_scan_presets": 50,
+        "allowed_modules":    None,   # None => every option
+        "allowed_tabs":       None,
+        "allowed_exchanges":  None,
+        "allowed_timeframes": None,
+    },
+}
+
+
+def _seed_tier_plans():
+    """Insert any missing TierPlan rows. Never modifies existing rows."""
+    import json as _json
+    from models import (TierPlan as _TP, ALL_TIERS as _AT,
+                        ALL_MODULES as _AM, ALL_TABS as _ATB,
+                        ALL_EXCHANGES as _AE, ALL_TIMEFRAMES as _ATF)
+    with app.app_context():
+        created = []
+        for tier in _AT:
+            if _TP.query.filter_by(tier=tier).first():
+                continue
+            spec = dict(_TIER_SEED[tier])
+            row = _TP(
+                tier=tier,
+                display_name=spec["display_name"],
+                description=spec["description"],
+                price_monthly=spec["price_monthly"],
+                sort_order=spec["sort_order"],
+                is_active=True,
+                daily_tokens=spec["daily_tokens"],
+                max_pairs_per_scan=spec["max_pairs_per_scan"],
+                max_pairs_per_cycle=spec["max_pairs_per_cycle"],
+                max_live_monitor_items=spec["max_live_monitor_items"],
+                ai_calls_per_day=spec["ai_calls_per_day"],
+                max_scan_presets=spec["max_scan_presets"],
+                allowed_modules=_json.dumps(spec["allowed_modules"] if spec["allowed_modules"] is not None else _AM),
+                allowed_tabs=_json.dumps(spec["allowed_tabs"] if spec["allowed_tabs"] is not None else _ATB),
+                allowed_exchanges=_json.dumps(spec["allowed_exchanges"] if spec["allowed_exchanges"] is not None else _AE),
+                allowed_timeframes=_json.dumps(spec["allowed_timeframes"] if spec["allowed_timeframes"] is not None else _ATF),
+            )
+            db.session.add(row)
+            created.append(tier)
+        if created:
+            db.session.commit()
+            print(f"[MIGRATE] seeded tier_plans: {', '.join(created)}")
 
 
 # Run auto-migration at startup
@@ -1632,6 +1715,7 @@ OKX_PERP_API        = "https://www.okx.com/api/v5/market"
 MEXC_SPOT_API       = "https://api.mexc.com/api/v3"
 MEXC_PERP_API       = "https://contract.mexc.com/api/v1/contract"   # public market endpoints
 MEXC_CONTRACT_PRIV  = "https://contract.mexc.com/api/v1/private"     # private account endpoints
+UPBIT_API           = "https://api.upbit.com/v1"                     # Upbit (spot-only; USDT market)
 BYBIT_API_V5        = "https://api.bybit.com"                         # Bybit V5 public endpoints
 OKX_API_V5          = "https://www.okx.com"                           # OKX V5 public endpoints
 
@@ -1662,6 +1746,7 @@ EXCHANGE_PAIR_CACHE: Dict[str, Dict] = {
     "bybit":   {"ts": 0, "pairs": {}},
     "okx":     {"ts": 0, "pairs": {}},
     "mexc":    {"ts": 0, "pairs": {}},
+    "upbit":   {"ts": 0, "pairs": {}},
 }
 
 # Complete set of USDT perpetual futures symbols actively traded on Binance
@@ -1708,6 +1793,9 @@ PAIR_CACHE: Dict[str, Any] = {
     "perpetual": {"ts": 0, "pairs": []},
 }
 ROUND_ROBIN_STATE: Dict[str, int] = {"index": 0}
+# Round-robin cursor for Selected Pairs mode — cycles through the user's
+# selected list in pairsPerCycle-sized batches, same as market mode.
+ROUND_ROBIN_SELECTED_STATE: Dict[str, int] = {"index": 0}
 # Per-user round-robin cursor for Bias Shift full-market scans.
 # Key: "username|exchange|market|tf" — isolates each user's position.
 BIAS_SCAN_CURSOR: Dict[str, int] = {}
@@ -3387,6 +3475,7 @@ def detect_breakers(
 
         mitigated_at  = None
         consumed_at   = None
+        touched_at    = None  # first bar price traded back into the zone after the flip
         mitigated_dir = None  # direction AFTER flip
 
         # Scan candles after OB formed
@@ -3402,16 +3491,26 @@ def detect_breakers(
                     mitigated_at  = j
                     mitigated_dir = "bullish"
             else:
-                # Already a breaker — check if consumed
-                if mitigated_dir == "bullish" and cur > zt:
+                # First touch: has price traded back into the breaker zone (a wick counts)?
+                if touched_at is None and h[j] >= zb and l[j] <= zt:
+                    touched_at = j
+                # Breaker invalidated when price closes beyond the FAR side, matching the Pine
+                # `breaker_invalidated` (bullish-OB breaker → close > top; bearish-OB breaker →
+                # close < bottom). The consumed side is the OPPOSITE of the mitigation side.
+                if mitigated_dir == "bearish" and cur > zt:      # was a bullish OB, reclaimed above top
                     consumed_at = j
                     break
-                elif mitigated_dir == "bearish" and cur < zb:
+                elif mitigated_dir == "bullish" and cur < zb:    # was a bearish OB, reclaimed below bottom
                     consumed_at = j
                     break
 
-        # Only keep active breakers (mitigated but not consumed)
+        # Only keep active breakers (mitigated, not reclaimed)
         if mitigated_at is None or consumed_at is not None:
+            continue
+
+        # Pending-first-touch only: drop any breaker whose zone price has already tested even once
+        # (this also excludes breakers price is currently sitting inside).
+        if touched_at is not None:
             continue
 
         age = n - 1 - mitigated_at
@@ -4507,7 +4606,11 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     current_atr = atr[-1] if atr[-1] is not None else max((max(h[-14:]) - min(l[-14:])), 1e-10)
 
     obs, _ = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"])
-    fvgs = detect_fvgs(o, h, l, c, v, tf)
+    use_ob  = settings.get("useObModule", True)
+    use_fvg = settings.get("useFvgModule", True)
+    # Only detect FVGs when at least one module that needs them is active.
+    # Breaker module does its own detect_fvgs() call internally.
+    fvgs = detect_fvgs(o, h, l, c, v, tf) if (use_fvg or use_ob) else []
 
     corr_value = None
     corr_label = None
@@ -4523,7 +4626,7 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
 
     # ── FVG alerts — collect ALL qualifying FVGs into one grouped alert ──
     qualifying_fvgs = []
-    for fvg in fvgs:
+    for fvg in (fvgs if use_fvg else []):
         if not filter_fvg(fvg, obs, price, settings):
             continue
         overlap_best = 0.0
@@ -4589,7 +4692,9 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     # max_ob=None returns ALL active OBs (no mixed truncation) so each direction
     # gets its own complete pool before showLast=5 + hideOverlap are applied.
     # Alert logic uses the original obs (max_ob=5 mixed) — unchanged.
-    obs_tv_src, _ = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"], max_ob=None)
+    # Skip expensive second detect + TV volume share when OB module is off.
+    obs_tv_src, _ = (detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"], max_ob=None)
+                     if use_ob else ([], None))
     bull_tv_src = [ob for ob in obs_tv_src if ob["type"] == "bullish"]
     bear_tv_src = [ob for ob in obs_tv_src if ob["type"] == "bearish"]
     tv_bull_pool = _tv_visible_pool(bull_tv_src)
@@ -4711,18 +4816,18 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     use_high_prob = settings.get("useHighProbOB", False)
     min_quality   = int(settings.get("obMinQuality", 50))
 
-    # ── Orderflow fetch — once per pair, only if OBs exist near price ──
+    # ── Orderflow fetch + quality scoring — skip entirely when OB module off ──
     ob_approach_pct_base_pre = settings.get("obDistancePct", settings.get("approachPct", 2.0))
-    _near_obs_check = [
+    _near_obs_check = ([
         ob for ob in bullish_obs_filt + bearish_obs_filt
         if obq_dist_from_price(price, ob["top"], ob["bottom"], ob.get("type","bullish"))
            <= ob_approach_pct_base_pre * 3
-    ]
+    ] if use_ob else [])
     _of_data = fetch_orderflow_data(symbol) if _near_obs_check else {
         "trades": [], "oi": None, "oi_change": None, "funding_rate": None
     }
 
-    for ob in bullish_obs_filt + bearish_obs_filt:
+    for ob in (bullish_obs_filt + bearish_obs_filt if use_ob else []):
         q_score, q_meta = score_ob_quality(ob, o, h, l, c, v, obs, fvgs, itrend, trend, times=times)
 
         # Orderflow analysis for this specific OB zone
@@ -4781,7 +4886,8 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     bullish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -(ob.get("tvObVolumeSharePct") or 0), -ob.get("quality", 0), ob.get("bar", 0)))
     bearish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -(ob.get("tvObVolumeSharePct") or 0), -ob.get("quality", 0), ob.get("bar", 0)))
 
-    for direction, ob_list in [("bullish", bullish_obs_filt), ("bearish", bearish_obs_filt)]:
+    for direction, ob_list in ([("bullish", bullish_obs_filt), ("bearish", bearish_obs_filt)]
+                               if use_ob else []):
         if not ob_list:
             continue
 
@@ -5744,6 +5850,90 @@ def get_klines_mexc(symbol: str, interval: str, limit: int = 300, market: str = 
         return []
 
 
+def get_pairs_upbit(market: str = "perpetual") -> List[Dict[str, Any]]:
+    """Fetch USDT pairs from Upbit. Upbit is spot-only, so the market arg is
+    ignored — we always return its USDT market (symbols normalized to BTCUSDT)."""
+    cache = EXCHANGE_PAIR_CACHE["upbit"]
+    mkey = "usdt"
+    if time.time() - cache["ts"] < 120 and cache["pairs"].get(mkey):
+        return cache["pairs"][mkey]
+    try:
+        r = req.get(f"{UPBIT_API}/market/all", params={"isDetails": "false"}, timeout=15)
+        if r.status_code != 200:
+            return cache["pairs"].get(mkey, [])
+        markets = [m.get("market", "") for m in r.json()
+                   if str(m.get("market", "")).startswith("USDT-")]
+        if not markets:
+            return []
+        pairs = []
+        # Upbit's /ticker accepts many markets per call; chunk to stay safe.
+        for i in range(0, len(markets), 100):
+            chunk = markets[i:i + 100]
+            tr = req.get(f"{UPBIT_API}/ticker", params={"markets": ",".join(chunk)}, timeout=15)
+            if tr.status_code != 200:
+                continue
+            for t in tr.json():
+                mk = t.get("market", "")                 # "USDT-BTC"
+                coin = mk.split("-", 1)[1] if "-" in mk else mk
+                sym = f"{coin}USDT"
+                price = safe_float(t.get("trade_price", 0))
+                vol = safe_float(t.get("acc_trade_price_24h", 0))   # 24h quote volume (USDT)
+                if price <= 0:
+                    continue
+                pairs.append({
+                    "symbol": sym,
+                    "price": price,
+                    "changePct": safe_float(t.get("signed_change_rate", 0)) * 100,
+                    "quoteVolume": vol,
+                    "volume": safe_float(t.get("acc_trade_volume_24h", 0)),
+                })
+        pairs.sort(key=lambda x: x["quoteVolume"], reverse=True)
+        cache["ts"] = time.time()
+        cache["pairs"][mkey] = pairs
+        print(f"[Upbit] get_pairs usdt: {len(pairs)} pairs")
+        return pairs
+    except Exception as e:
+        print(f"[Upbit] get_pairs error: {e}")
+        return cache["pairs"].get(mkey, [])
+
+
+def get_klines_upbit(symbol: str, interval: str, limit: int = 200,
+                     market: str = "perpetual") -> List[Dict[str, float]]:
+    """Fetch OHLCV candles from Upbit (USDT market). Max 200 candles/request."""
+    try:
+        base = symbol[:-4] if symbol.endswith("USDT") else symbol
+        mk = f"USDT-{base}"
+        cnt = max(1, min(limit, 200))
+        iv = (interval or "4h").lower()
+        if iv in ("1d", "1day", "day"):
+            url = f"{UPBIT_API}/candles/days"
+        elif iv in ("1w", "1week", "week"):
+            url = f"{UPBIT_API}/candles/weeks"
+        else:
+            unit_map = {"1m": 1, "3m": 3, "5m": 5, "10m": 10, "15m": 15,
+                        "30m": 30, "1h": 60, "4h": 240}
+            unit = unit_map.get(iv, 240)   # 6h/12h etc. not native on Upbit → nearest (4h)
+            url = f"{UPBIT_API}/candles/minutes/{unit}"
+        r = req.get(url, params={"market": mk, "count": cnt}, timeout=15)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        if not isinstance(data, list):
+            return []
+        data = list(reversed(data))   # Upbit returns newest-first
+        return [{
+            "openTime": int(k.get("timestamp", 0)),
+            "open":  float(k.get("opening_price", 0)),
+            "high":  float(k.get("high_price", 0)),
+            "low":   float(k.get("low_price", 0)),
+            "close": float(k.get("trade_price", 0)),
+            "volume": float(k.get("candle_acc_trade_volume", 0)),
+        } for k in data]
+    except Exception as e:
+        print(f"[Upbit] get_klines {symbol} error: {e}")
+        return []
+
+
 def get_pairs_exchange(exchange: str, market: str = "perpetual") -> List[Dict[str, Any]]:
     """Universal get_pairs — routes to correct exchange"""
     exchange = (exchange or "binance").lower()
@@ -5753,6 +5943,8 @@ def get_pairs_exchange(exchange: str, market: str = "perpetual") -> List[Dict[st
         return get_pairs_okx(market)
     elif exchange == "mexc":
         return get_pairs_mexc(market)
+    elif exchange == "upbit":
+        return get_pairs_upbit(market)
     else:
         return get_pairs(market)  # Binance (default)
 
@@ -5773,6 +5965,8 @@ def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
         result = get_klines_okx(symbol, interval, limit, market)
     elif exchange == "mexc":
         result = get_klines_mexc(symbol, interval, limit, market)
+    elif exchange == "upbit":
+        result = get_klines_upbit(symbol, interval, limit, market)
     else:
         # get_klines() auto-paginates when limit > 1500
         result = get_klines(symbol, interval, limit, market)
@@ -6654,6 +6848,8 @@ def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         "breakerApproachPct": float(payload.get("breakerApproachPct", 2.0)),
         "breakerMaxAge":      int(payload.get("breakerMaxAge", 200)),
         "breakerRequireFvg":  bool(payload.get("breakerRequireFvg", False)),
+        "useObModule":        bool(payload.get("useObModule", True)),
+        "useFvgModule":       bool(payload.get("useFvgModule", True)),
     }
 
 
@@ -6680,29 +6876,6 @@ def admin_required(f):
             return redirect(url_for("index"))
         return f(*args, **kwargs)
     return decorated
-
-
-def _guest_tab_check(tab_name: str):
-    """Returns error tuple if guest is blocked, else None. Also increments scan count."""
-    if not session.get("is_guest"):
-        return None
-    if not _guest_controls.get("enabled", True):
-        return jsonify({"error": "Guest access is disabled."}), 403
-    if not _guest_controls["tabs"].get(tab_name, False):
-        return jsonify({"error": f"The '{tab_name}' tab is not available for guests."}), 403
-    guest_id = session.get("guest_id", "")
-    max_scans = int(_guest_controls.get("max_scans_per_session", 5))
-    with _guest_lock:
-        gs = _guest_sessions.get(guest_id, {})
-        if gs.get("scan_count", 0) >= max_scans:
-            return jsonify({"error": f"Guest scan limit reached ({max_scans}/session). Sign in for unlimited access."}), 429
-        gs["scan_count"] = gs.get("scan_count", 0) + 1
-        tabs = gs.get("tabs_visited", [])
-        if tab_name not in tabs:
-            tabs.append(tab_name)
-        gs["tabs_visited"] = tabs
-        _guest_sessions[guest_id] = gs
-    return None
 
 
 def _mask_email(email: str) -> str:
@@ -7872,60 +8045,6 @@ def api_admin_tab_toggle():
     return jsonify({"ok": True, "tab_controls": _tab_controls})
 
 
-@app.route("/api/admin/guest/controls", methods=["GET", "POST"])
-@admin_required
-def api_admin_guest_controls():
-    if request.method == "GET":
-        return jsonify({"guest_controls": _guest_controls})
-    data = request.get_json(force=True) or {}
-    if "enabled" in data:
-        _guest_controls["enabled"] = bool(data["enabled"])
-    if "max_scans_per_session" in data:
-        _guest_controls["max_scans_per_session"] = max(1, int(data["max_scans_per_session"]))
-    if "max_pairs" in data:
-        _guest_controls["max_pairs"] = max(1, int(data["max_pairs"]))
-    if "tabs" in data and isinstance(data["tabs"], dict):
-        for tab, val in data["tabs"].items():
-            if tab in _guest_controls["tabs"]:
-                _guest_controls["tabs"][tab] = bool(val)
-    return jsonify({"ok": True, "guest_controls": _guest_controls})
-
-
-@app.route("/api/admin/guest/sessions")
-@admin_required
-def api_admin_guest_sessions():
-    with _guest_lock:
-        sessions = [{"guest_id": k, **v} for k, v in _guest_sessions.items()]
-    return jsonify({"sessions": sessions, "total": len(sessions)})
-
-
-# ── Guest login ──
-@app.route("/guest/login", methods=["POST"])
-def guest_login():
-    if not _guest_controls.get("enabled", True):
-        return jsonify({"error": "Guest access is currently disabled."}), 403
-    guest_id = os.urandom(12).hex()
-    display  = f"guest_{guest_id[:6]}"
-    session["logged_in"]  = True
-    session["is_guest"]   = True
-    session["guest_id"]   = guest_id
-    session["username"]   = display
-    ip      = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
-    ua      = request.headers.get("User-Agent", "unknown")
-    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    with _guest_lock:
-        _guest_sessions[guest_id] = {
-            "ip": ip, "ua": ua,
-            "login_time": datetime.now(timezone.utc).isoformat(),
-            "scan_count": 0, "tabs_visited": [],
-        }
-    LOGIN_AUDIT_LOG.appendleft({
-        "username": f"GUEST-{guest_id[:6]}", "time": now_utc,
-        "ip": ip, "geo": "", "ua": ua, "success": True
-    })
-    return redirect(url_for("index"))
-
-
 # ── Watchlist streaming endpoints ──
 
 @app.route("/api/watchlist/register", methods=["POST"])
@@ -8006,6 +8125,61 @@ def _current_user_id_and_user():
         return u.id, u
     except Exception:
         return None, None
+
+
+# ── Tier quota gates ─────────────────────────────────────────────────────────
+# Each returns an error response tuple when the user is over their plan limit,
+# or None when the request may proceed. A 402 tells the frontend to show an
+# upgrade prompt rather than a generic failure.
+
+def _tier_gate_live_monitor(uid, user):
+    """Block a new Live Monitor item once the plan's item cap is reached."""
+    try:
+        from permissions import check_live_monitor_quota
+        from models import LiveMonitorItem as _LMI
+        current = _LMI.query.filter_by(user_id=uid, is_active=True).count()
+        ok, used, limit = check_live_monitor_quota(user, current)
+        if not ok:
+            return jsonify({
+                "error":   "tier_limit",
+                "limit":   "live_monitor_items",
+                "used":    used,
+                "max":     limit,
+                "message": f"Your plan allows {limit} active Live Monitor "
+                           f"item{'' if limit == 1 else 's'}. Remove one or upgrade to add more.",
+            }), 402
+    except Exception as e:
+        print(f"[TIER] live monitor gate error: {e}")
+    return None
+
+
+def _tier_gate_ai(uid, user):
+    """Block an AI request once the plan's daily call budget is spent."""
+    try:
+        from permissions import check_ai_quota
+        ok, used, limit = check_ai_quota(user)
+        if not ok:
+            return jsonify({
+                "error":   "tier_limit",
+                "limit":   "ai_calls_per_day",
+                "used":    used,
+                "max":     limit,
+                "message": f"You have used all {limit} AI request"
+                           f"{'' if limit == 1 else 's'} for today. "
+                           f"The limit resets at midnight UTC, or upgrade for more.",
+            }), 402
+    except Exception as e:
+        print(f"[TIER] ai gate error: {e}")
+    return None
+
+
+def _tier_charge_ai(uid):
+    """Record one AI call against today's budget."""
+    try:
+        from permissions import consume_ai_call
+        consume_ai_call(uid)
+    except Exception as e:
+        print(f"[TIER] ai charge error: {e}")
 
 
 def _json_dumps_safe(obj) -> str:
@@ -23689,10 +23863,15 @@ def _lm_call_ai_provider(context: dict, user_message: str = None,
         "configured":  agent.get("configured", False),
     }
 
+    # The local fallback costs nothing, so it is never metered.
     if provider == "local_fallback" or not agent.get("configured"):
         return {**base_result, "ok": False, "configured": False,
                 "analysis": _lm_local_ai_fallback(context, user_message),
                 "error": "AI provider not configured"}
+
+    # Meter every real provider invocation. Consensus fans out to one call per
+    # agent, so a 3-agent run correctly costs 3 against the daily budget.
+    _lm_meter_ai_call()
 
     try:
         if provider in ("openrouter", "openai", "deepseek", "custom_openai"):
@@ -23711,6 +23890,23 @@ def _lm_call_ai_provider(context: dict, user_message: str = None,
         return {**base_result, "ok": False,
                 "analysis": _lm_local_ai_fallback(context, user_message),
                 "error": f"Provider error: {type(_e).__name__}"}
+
+
+def _lm_meter_ai_call() -> None:
+    """Charge one AI call to the requesting user's daily budget.
+
+    Only meters inside a request context — background workers (auto-refresh,
+    learning review) are system work and must not consume a user's quota.
+    """
+    try:
+        from flask import has_request_context
+        if not has_request_context():
+            return
+        uid = _current_user_id()
+        if uid:
+            _tier_charge_ai(uid)
+    except Exception as e:
+        print(f"[TIER] ai meter error: {e}")
 
 
 def _lm_call_ai_agent(context: dict, user_message: str = None) -> dict:
@@ -23956,7 +24152,7 @@ def api_scan_presets_list():
 @app.route("/api/scan-presets", methods=["POST"])
 @login_required
 def api_scan_presets_create():
-    uid = _current_user_id()
+    uid, _preset_user = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
     data = request.get_json(force=True) or {}
@@ -23970,9 +24166,28 @@ def api_scan_presets_create():
         return jsonify({"error": "bad_payload"}), 400
     from models import db as _db, ScanPreset as _P
     is_def = bool(data.get("isDefault"))
+    existing = _P.query.filter_by(user_id=uid, name=name).first()
+    if not existing:
+        # Overwriting a preset by name is always allowed; only a new one counts.
+        try:
+            from permissions import check_preset_quota
+            current = _P.query.filter_by(user_id=uid).count()
+            ok, used, limit = check_preset_quota(_preset_user, current)
+            if not ok:
+                return jsonify({
+                    "error":   "tier_limit",
+                    "limit":   "scan_presets",
+                    "used":    used,
+                    "max":     limit,
+                    "message": f"Your plan allows {limit} saved preset"
+                               f"{'' if limit == 1 else 's'}. "
+                               f"Delete one or upgrade to save more.",
+                }), 402
+        except Exception as e:
+            print(f"[TIER] preset gate error: {e}")
+
     if is_def:
         _P.query.filter_by(user_id=uid, is_default=True).update({"is_default": False})
-    existing = _P.query.filter_by(user_id=uid, name=name).first()
     if existing:
         existing.payload    = payload_str
         existing.is_default = is_def
@@ -24507,7 +24722,7 @@ def api_lm_items_get():
 @login_required
 def api_lm_items_post():
     """Save a full setup snapshot to Live Monitor. Creates or updates if duplicate zone."""
-    uid, _ = _current_user_id_and_user()
+    uid, _lm_user = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
 
@@ -24609,6 +24824,11 @@ def api_lm_items_post():
         row = existing
         created = False
     else:
+        # Only a genuinely new item counts against the plan's item cap —
+        # updating an existing watch is always allowed.
+        _gate = _tier_gate_live_monitor(uid, _lm_user)
+        if _gate:
+            return _gate
         row = _LMI(
             user_id             = uid,
             symbol              = symbol,
@@ -27244,9 +27464,13 @@ def api_lm_ai_providers():
 @login_required
 def api_lm_items_ai_analyze(item_id):
     """Run AI analysis on one Live Monitor item. Stores result in snapshot_json."""
-    uid, _ = _current_user_id_and_user()
+    uid, _ai_user = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
+
+    _gate = _tier_gate_ai(uid, _ai_user)
+    if _gate:
+        return _gate
 
     from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
     row = _LMI.query.filter_by(id=item_id).first()
@@ -27358,9 +27582,13 @@ def api_lm_items_ai_analyze(item_id):
 @login_required
 def api_lm_items_ai_consensus(item_id):
     """Run all configured AI agents and return a consensus verdict. Stores in snapshot_json."""
-    uid, _ = _current_user_id_and_user()
+    uid, _ai_user = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
+
+    _gate = _tier_gate_ai(uid, _ai_user)
+    if _gate:
+        return _gate
 
     from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
     row = _LMI.query.filter_by(id=item_id).first()
@@ -28493,9 +28721,13 @@ def api_lm_items_ai_trade_proposal(item_id):
     Refreshes stale data if needed, calls AI with proposal prompt, creates
     LiveMonitorTrade record (status=proposed or draft). No execution.
     """
-    uid, _ = _current_user_id_and_user()
+    uid, _ai_user = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
+
+    _gate = _tier_gate_ai(uid, _ai_user)
+    if _gate:
+        return _gate
 
     from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorTrade as _LMT
     row = _LMI.query.filter_by(id=item_id).first()
@@ -28967,9 +29199,13 @@ def _lm_chat_save(uid, row, role: str, content: str,
 @login_required
 def api_lm_items_ai_chat(item_id):
     """Handle a live chat message about one item. Saves history to DB (Phase 10.5)."""
-    uid, _ = _current_user_id_and_user()
+    uid, _ai_user = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
+
+    _gate = _tier_gate_ai(uid, _ai_user)
+    if _gate:
+        return _gate
 
     from models import LiveMonitorItem as _LMI
     row = _LMI.query.filter_by(id=item_id).first()
@@ -33203,8 +33439,7 @@ def api_my_permissions():
                             "allowed_tabs": ["scan","pairs","settings"],
                             "allowed_modules": ["ob","fvg","fib","bias"],
                             "allowed_exchanges": ["binance"], "allowed_timeframes": ["1h","4h"],
-                            "tab_controls": dict(_tab_controls),
-                            "is_guest": bool(session.get("is_guest"))})
+                            "tab_controls": dict(_tab_controls)})
         perms = get_user_permissions(user)
         maint = _GlobalSetting.query.filter_by(key="maintenance_mode").first()
         perms["maintenance_mode"] = (maint.value == "true") if maint else False
@@ -33214,14 +33449,16 @@ def api_my_permissions():
         perms["role"]     = user.role
         # Global tab toggles (admin can disable any tab for everyone)
         perms["tab_controls"] = dict(_tab_controls)
-        # Guest-specific limits (only meaningful when is_guest=True)
-        perms["is_guest"] = bool(session.get("is_guest"))
-        if perms["is_guest"]:
-            perms["guest_controls"] = {
-                "tabs": dict(_guest_controls.get("tabs", {})),
-                "max_scans_per_session": int(_guest_controls.get("max_scans_per_session", 5)),
-                "max_pairs": int(_guest_controls.get("max_pairs", 20)),
-            }
+        # Live tier usage so the UI can show remaining budget and upgrade prompts
+        try:
+            from permissions import ai_calls_today
+            from models import LiveMonitorItem as _LMIQ, ScanPreset as _SPQ
+            perms["ai_calls_used_today"] = ai_calls_today(user.id)
+            perms["live_monitor_used"]   = _LMIQ.query.filter_by(
+                user_id=user.id, is_active=True).count()
+            perms["scan_presets_used"]   = _SPQ.query.filter_by(user_id=user.id).count()
+        except Exception as _ue:
+            print(f"[PERMS] usage counts error: {_ue}")
         return jsonify(perms)
     except Exception as e:
         return jsonify({"error": str(e), "is_admin": False, "daily_tokens": 500,
@@ -33229,61 +33466,6 @@ def api_my_permissions():
                         "allowed_modules": ["ob","fvg","fib","bias"],
                         "allowed_exchanges": ["binance"], "allowed_timeframes": ["1h","4h"],
                         "tab_controls": dict(_tab_controls)})
-
-
-@app.route("/guest-access")
-def guest_access():
-    """Auto-login guest by device fingerprint."""
-    import hashlib, secrets
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
-    ua = request.headers.get("User-Agent", "")
-    lang = request.headers.get("Accept-Language", "")
-    fp_raw = f"{ip}|{ua}|{lang}"
-    fp = hashlib.sha256(fp_raw.encode()).hexdigest()
-    try:
-        from models import GuestDevice
-        allow = True
-        try:
-            gs = _GlobalSetting.query.filter_by(key="allow_guest_access").first()
-            if gs and gs.value == "false":
-                allow = False
-        except Exception:
-            pass
-        if not allow:
-            return redirect(url_for("index"))
-
-        gd = GuestDevice.query.filter_by(device_fingerprint=fp).first()
-        if gd:
-            user = _DBUser.query.get(gd.user_id)
-            if user and user.status == "active":
-                gd.last_seen_at = datetime.now(timezone.utc)
-                db.session.commit()
-                session["logged_in"] = True
-                session["username"]  = user.username
-                session["user_id"]   = user.id
-                return redirect(url_for("index"))
-
-        # Create new guest
-        rnd = secrets.token_hex(3)
-        gname = f"guest_{rnd}"
-        gpwd  = secrets.token_urlsafe(16)
-        new_user = _DBUser(username=gname, role="guest", status="active")
-        new_user.set_password(gpwd)
-        db.session.add(new_user)
-        db.session.flush()
-        gd_new = GuestDevice(device_fingerprint=fp, user_id=new_user.id,
-                              ip_address=ip, user_agent=ua)
-        db.session.add(gd_new)
-        db.session.commit()
-        session["logged_in"] = True
-        session["username"]  = gname
-        session["user_id"]   = new_user.id
-        session["is_guest"]  = True
-        session["guest_id"]  = gname
-        return redirect(url_for("index"))
-    except Exception as e:
-        print(f"[GUEST-ACCESS] Error: {e}")
-        return redirect(url_for("index"))
 
 
 def _get_scan_user_id():
@@ -33329,8 +33511,6 @@ def _check_and_get_token_user():
 @app.route("/api/scan", methods=["POST"])
 @login_required
 def api_scan():
-    err = _guest_tab_check("scan")
-    if err is not None: return err
 
     # Token check
     _scan_user_id = None
@@ -33351,13 +33531,6 @@ def api_scan():
     mode = payload.get("scanMode", "selected")
     pairs_per_cycle = int(payload.get("pairsPerCycle", 20))
 
-    # Guests are capped by admin-set max_pairs (was previously stored but unused).
-    if session.get("is_guest"):
-        cap = max(1, int(_guest_controls.get("max_pairs", 20)))
-        if pairs_per_cycle > cap:
-            pairs_per_cycle = cap
-        if isinstance(symbols, list) and len(symbols) > cap:
-            symbols = symbols[:cap]
 
     # FIX BUG 1: Full Market ALWAYS ignores selectedPairs
     # even if frontend accidentally sends them
@@ -33373,10 +33546,26 @@ def api_scan():
         else:
             symbols = all_pairs[:pairs_per_cycle]
     else:
-        # Selected Pairs mode — use only what frontend sent
-        # If nothing selected, fall back to top pairs
+        # Selected Pairs mode — cycle through the user's selected list in batches,
+        # exactly like market mode does with the full pair list.
         if not symbols:
+            # Nothing selected — fall back to top market pairs
             symbols = [p["symbol"] for p in get_pairs_exchange(exchange, market)[:pairs_per_cycle]]
+        elif len(symbols) <= pairs_per_cycle:
+            # All selected pairs fit in one cycle — scan them all, reset cursor
+            ROUND_ROBIN_SELECTED_STATE["index"] = 0
+        elif payload.get("roundRobin", False):
+            # More selected pairs than one cycle — advance cursor
+            start = ROUND_ROBIN_SELECTED_STATE["index"] % len(symbols)
+            chosen = symbols[start:start + pairs_per_cycle]
+            if len(chosen) < pairs_per_cycle:
+                chosen += symbols[:max(0, pairs_per_cycle - len(chosen))]
+            ROUND_ROBIN_SELECTED_STATE["index"] = (start + pairs_per_cycle) % len(symbols)
+            symbols = chosen
+        else:
+            # roundRobin=False (Prev / reset) — reset cursor, scan first batch
+            ROUND_ROBIN_SELECTED_STATE["index"] = 0
+            symbols = symbols[:pairs_per_cycle]
 
     btc_closes = None
     try:
@@ -33452,6 +33641,29 @@ def api_scan():
     elif filter_mode == "match" and checked_signals:
         # OR logic — at least one checked signal must be present
         results = [r for r in results if any(has_signal(r, s) for s in checked_signals)]
+
+    # Strip non-selected module alerts from each surviving result so only
+    # the chosen module types appear in the alerts list and topAlert.
+    if filter_mode == "match" and checked_signals:
+        _SIG_SETUPS = {
+            "OB":      {"OB_APPROACH", "OB_CONSOL"},
+            "FVG":     {"FVG"},
+            "FIB":     {"FIB_APPROACH", "FIB_REACTION"},
+            "BREAKER": {"BREAKER_APPROACH", "BREAKER_INSIDE"},
+        }
+        _allowed_setups = set()
+        for _s in checked_signals:
+            _allowed_setups |= _SIG_SETUPS.get(_s, set())
+
+        cleaned = []
+        for r in results:
+            kept = [a for a in r.get("alerts", []) if a.get("setup") in _allowed_setups]
+            if kept:
+                r = dict(r)
+                r["alerts"] = kept
+                r["topAlert"] = max(kept, key=lambda a: a.get("strength", 0))
+                cleaned.append(r)
+        results = cleaned
 
     if _scan_user_id:
         try:
@@ -33688,8 +33900,6 @@ def _compressed_action_plan(box_location, trade_score, compression_score,
 @app.route("/api/compressed_scan", methods=["POST"])
 @login_required
 def api_compressed_scan():
-    err = _guest_tab_check("compressed")
-    if err is not None: return err
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
         return _daily_limit_response()
@@ -33993,11 +34203,469 @@ def api_compressed_scan():
     })
 
 
+# ─── Accumulation Base scan ────────────────────────────────────────────────
+# Deliberately separate from /api/compressed_scan. That scan looks for tight
+# intraday coils (range <= ~2% over ~12 candles). This one looks for wide
+# post-capitulation accumulation ranges (range 40-70% over 100-600 daily
+# candles). They share only the closed-candle rule.
+#
+# Binance + MEXC only: OKX caps klines at 300/request and Bybit at 200, which
+# cannot cover a multi-month base. get_klines_exchange_window() does not help
+# there — it only paginates Binance endpoints regardless of the exchange tag.
+
+BASE_SCAN_EXCHANGES = {"binance", "mexc"}
+BASE_SCAN_TF = {"1d", "1w"}   # 1w has no INTERVAL_MAP entry outside Binance
+
+# Own cursor, deliberately not shared with ROUND_ROBIN_STATE. Base scanning
+# pulls ~450 daily candles per pair against Main Scan's much lighter fetch, so
+# the two advance at very different rates; sharing one index would make both
+# skip around the market unpredictably.
+BASE_ROUND_ROBIN_STATE: Dict[str, int] = {"index": 0}
+BASE_ROUND_ROBIN_SELECTED_STATE: Dict[str, int] = {"index": 0}
+
+
+def _base_percentile_box(closes, lo_pct=10.0, hi_pct=90.0):
+    """Band from percentiles, NOT max/min.
+
+    Accumulation bases routinely spike well outside the range price actually
+    holds (a single wick to 2x the band top is common). max(high)/min(low)
+    would inflate the box past those spikes and the breakout would never fire.
+    """
+    arr = np.asarray(closes, dtype=float)
+    return float(np.percentile(arr, lo_pct)), float(np.percentile(arr, hi_pct))
+
+
+def _base_drift_pct(closes):
+    """Total linear-regression drift across the window, as % of mean price.
+
+    Near zero = flat base. Large magnitude = still trending, not basing.
+    """
+    n = len(closes)
+    if n < 10:
+        return None
+    y = np.asarray(closes, dtype=float)
+    mean_p = float(np.mean(y))
+    if mean_p <= 0:
+        return None
+    slope = float(np.polyfit(np.arange(n, dtype=float), y, 1)[0])
+    return (slope * n / mean_p) * 100.0
+
+
+def _base_mid_crossings(closes, mid):
+    """Times price crosses the band mid.
+
+    This is the real range-vs-trend discriminator: a genuine range oscillates
+    across its midpoint many times, a trend crosses once and leaves.
+    """
+    crossings = 0
+    prev = None
+    for cl in closes:
+        side = 1 if cl > mid else (-1 if cl < mid else 0)
+        if side == 0:
+            continue
+        if prev is not None and side != prev:
+            crossings += 1
+        prev = side
+    return crossings
+
+
+def _base_evaluate(h, l, c, v, end_idx, base_window, max_drift_pct, drawdown_pct):
+    """Score the base_window candles ending at end_idx. None if it isn't a base.
+
+    Returns geometry + quality metrics + a 0-100 score.
+    """
+    start = end_idx - base_window + 1
+    if start < 0 or end_idx >= len(c):
+        return None
+    bc = c[start:end_idx + 1]
+    bh = h[start:end_idx + 1]
+    bl = l[start:end_idx + 1]
+    bv = v[start:end_idx + 1]
+    if len(bc) < 20:
+        return None
+
+    base_low, base_high = _base_percentile_box(bc)
+    band = base_high - base_low
+    if band <= 1e-10:
+        return None
+    base_mid = (base_high + base_low) / 2.0
+
+    drift = _base_drift_pct(bc)
+    if drift is None:
+        return None
+
+    crossings = _base_mid_crossings(bc, base_mid)
+    upper_touches = sum(1 for x in bh if x >= base_high)
+    lower_touches = sum(1 for x in bl if x <= base_low)
+
+    # Hard gates — must actually behave like a two-sided range
+    if abs(drift) > max_drift_pct:
+        return None
+    if crossings < 3 or upper_touches < 1 or lower_touches < 1:
+        return None
+
+    # Volatility / volume contraction measured against the pre-base history.
+    # Mean true-range-as-%-of-price avoids ATR's EMA warmup on short slices.
+    ctx_h, ctx_l, ctx_c, ctx_v = h[:start], l[:start], c[:start], v[:start]
+    base_rng_pct = float(np.mean([hi - lo for hi, lo in zip(bh, bl)])) / max(float(np.mean(bc)), 1e-10) * 100.0
+    if len(ctx_c) >= 20:
+        ctx_rng_pct = float(np.mean([hi - lo for hi, lo in zip(ctx_h, ctx_l)])) / max(float(np.mean(ctx_c)), 1e-10) * 100.0
+        atr_ratio = round(base_rng_pct / max(ctx_rng_pct, 1e-10), 3)
+        atr_state = ("strong_contraction" if atr_ratio <= 0.55
+                     else "contracting" if atr_ratio <= 0.85
+                     else "normal" if atr_ratio <= 1.15 else "expanding")
+        vol_ratio = round(float(np.mean(bv)) / max(float(np.mean(ctx_v)), 1e-10), 3)
+        vol_state = ("drying" if vol_ratio <= 0.6
+                     else "normal" if vol_ratio <= 1.2 else "expanding")
+    else:
+        atr_ratio, atr_state = None, "unknown"
+        vol_ratio, vol_state = None, "unknown"
+
+    # Score 0-100
+    score = 0.0
+    score += 20.0 * max(0.0, 1.0 - abs(drift) / max(max_drift_pct, 1e-10))      # flatness
+    score += 20.0 * min(1.0, crossings / max(base_window / 25.0, 1.0))          # oscillation
+    score += 10.0 * min(1.0, (min(upper_touches, 3) + min(lower_touches, 3)) / 6.0)
+    if atr_ratio is not None:
+        score += 20.0 * max(0.0, min(1.0, (1.15 - atr_ratio) / 0.65))           # vol contraction
+    if vol_ratio is not None:
+        score += 15.0 * max(0.0, min(1.0, (1.2 - vol_ratio) / 0.6))             # volume dry-up
+    score += 15.0 * min(1.0, drawdown_pct / 80.0)                               # depth of crash
+
+    return {
+        "start": start,
+        "end": end_idx,
+        "baseLow": base_low,
+        "baseHigh": base_high,
+        "baseMid": base_mid,
+        "band": band,
+        "driftPct": round(drift, 2),
+        "crossings": crossings,
+        "upperTouches": upper_touches,
+        "lowerTouches": lower_touches,
+        "baseRangePct": round(base_rng_pct, 3),
+        "atrBaseRatio": atr_ratio,
+        "atrState": atr_state,
+        "volumeBaseRatio": vol_ratio,
+        "volumeState": vol_state,
+        "score": round(min(score, 100.0)),
+        "baseVolMean": float(np.mean(bv)),
+    }
+
+
+@app.route("/api/base_scan", methods=["POST"])
+@login_required
+def api_base_scan():
+    _tok_user, _tok_uid = _check_and_get_token_user()
+    if _tok_user == "limit":
+        return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
+    payload = request.get_json(force=True) or {}
+
+    exchange = str(payload.get("exchange", "binance")).lower()
+    if exchange not in BASE_SCAN_EXCHANGES:
+        return jsonify({"error": "invalid_input",
+                        "message": "Base scan supports binance and mexc only — OKX (300) and Bybit (200) cap kline history below what a multi-month base needs."}), 400
+
+    tf = payload.get("timeframe", "1d")
+    if tf not in BASE_SCAN_TF:
+        return jsonify({"error": "invalid_input", "message": "timeframe must be 1d or 1w"}), 400
+    if tf == "1w" and exchange != "binance":
+        return jsonify({"error": "invalid_input", "message": "1w is Binance-only — no weekly interval mapping for mexc"}), 400
+
+    market = payload.get("market", "perpetual")
+    if market not in ("spot", "perpetual"):
+        return jsonify({"error": "invalid_input", "message": "market must be spot or perpetual"}), 400
+
+    try:
+        base_window = int(payload.get("baseWindow", 180))
+        if not (40 <= base_window <= 600):
+            return jsonify({"error": "invalid_input", "message": "baseWindow must be between 40 and 600"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid_input", "message": "baseWindow must be an integer"}), 400
+
+    try:
+        min_drawdown = float(payload.get("minDrawdownPct", 60.0))
+        if not (0 <= min_drawdown <= 95):
+            return jsonify({"error": "invalid_input", "message": "minDrawdownPct must be between 0 and 95"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid_input", "message": "minDrawdownPct must be a number"}), 400
+
+    try:
+        max_drift = float(payload.get("maxDriftPct", 25.0))
+        if not (1 <= max_drift <= 100):
+            return jsonify({"error": "invalid_input", "message": "maxDriftPct must be between 1 and 100"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid_input", "message": "maxDriftPct must be a number"}), 400
+
+    try:
+        max_break_age = int(payload.get("maxBreakoutAge", 30))
+        if not (0 <= max_break_age <= 200):
+            return jsonify({"error": "invalid_input", "message": "maxBreakoutAge must be between 0 and 200"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid_input", "message": "maxBreakoutAge must be an integer"}), 400
+
+    try:
+        pairs_per_cycle = int(payload.get("pairsPerCycle", 80))
+        if not (1 <= pairs_per_cycle <= 200):
+            return jsonify({"error": "invalid_input", "message": "pairsPerCycle must be between 1 and 200"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid_input", "message": "pairsPerCycle must be an integer"}), 400
+
+    raw_symbols = payload.get("symbols") or []
+    if raw_symbols:
+        normed = []
+        for _s in raw_symbols:
+            _s = str(_s).strip().upper().replace("/", "").replace("-", "").replace("_", "")
+            if _s and not _s.endswith("USDT"):
+                _s += "USDT"
+            if _s:
+                normed.append(_s)
+        symbols = list(dict.fromkeys(normed))
+        # Selected scope cycles too, mirroring /api/scan. A 200-pair watchlist
+        # at ~450 candles each is otherwise one very heavy request.
+        if len(symbols) <= pairs_per_cycle:
+            BASE_ROUND_ROBIN_SELECTED_STATE["index"] = 0
+        elif payload.get("roundRobin", True):
+            start = BASE_ROUND_ROBIN_SELECTED_STATE["index"] % len(symbols)
+            chosen = symbols[start:start + pairs_per_cycle]
+            if len(chosen) < pairs_per_cycle:
+                chosen += symbols[:max(0, pairs_per_cycle - len(chosen))]
+            BASE_ROUND_ROBIN_SELECTED_STATE["index"] = (start + pairs_per_cycle) % len(symbols)
+            symbols = chosen
+        else:
+            BASE_ROUND_ROBIN_SELECTED_STATE["index"] = 0
+            symbols = symbols[:pairs_per_cycle]
+    else:
+        all_pairs = [p["symbol"] for p in get_pairs_exchange(exchange, market)]
+        if payload.get("roundRobin", True) and all_pairs:
+            # Walk the market a batch at a time, wrapping at the end, so
+            # repeated scans cover new ground instead of re-checking the head.
+            start = BASE_ROUND_ROBIN_STATE["index"] % len(all_pairs)
+            symbols = all_pairs[start:start + pairs_per_cycle]
+            if len(symbols) < pairs_per_cycle:
+                symbols += all_pairs[:max(0, pairs_per_cycle - len(symbols))]
+            BASE_ROUND_ROBIN_STATE["index"] = (start + pairs_per_cycle) % len(all_pairs)
+        else:
+            symbols = all_pairs[:pairs_per_cycle]
+
+    need = min(1500, base_window * 2 + max_break_age + 60)
+    print(f"[DEBUG] base_scan exchange={exchange} market={market} tf={tf} window={base_window} need={need} symbols={len(symbols)}")
+
+    results = []
+    errors = 0
+    for sym in symbols:
+        try:
+            kl = get_klines_exchange(sym, tf, need, market, exchange)
+            if not kl or len(kl) < base_window + 30:
+                errors += 1
+                continue
+            # Closed candles only — the forming candle never participates
+            closed = kl[:-1]
+            h = [x["high"] for x in closed]
+            l = [x["low"] for x in closed]
+            c = [x["close"] for x in closed]
+            v = [x["volume"] for x in closed]
+            n = len(c)
+            price = c[-1]
+
+            # A real accumulation base sits at the end of a deep decline
+            window_high = max(h)
+            drawdown = ((window_high - price) / max(window_high, 1e-10)) * 100.0
+            if drawdown < min_drawdown:
+                continue
+
+            # Grid-search where the base ENDS. A pair that broke out 60 candles
+            # ago still needs its band measured from before that breakout —
+            # otherwise the post-breakout candles drag the 90th percentile up
+            # and the band no longer describes the base.
+            step = max(1, max_break_age // 10)
+            best = None
+            for off in range(0, max_break_age + 1, step):
+                cand = _base_evaluate(h, l, c, v, n - 1 - off, base_window, max_drift, drawdown)
+                if cand is None:
+                    continue
+                if best is None or cand["score"] > best["score"]:
+                    best = cand
+            if best is None:
+                continue
+
+            base_low = round(best["baseLow"], 8)
+            base_high = round(best["baseHigh"], 8)
+            base_mid = round(best["baseMid"], 8)
+            band = max(best["band"], 1e-10)
+
+            price_pos = round(max(0.0, min(100.0, ((price - best["baseLow"]) / band) * 100.0)), 1)
+            base_end_bars_ago = (n - 1) - best["end"]
+
+            # Where has price gone since the base ended?
+            post_c = c[best["end"] + 1:]
+            post_v = v[best["end"] + 1:]
+            breakout_bars_ago = None
+            breakout_vol_ratio = None
+            for i, cl in enumerate(post_c):
+                if cl > best["baseHigh"]:
+                    breakout_bars_ago = len(post_c) - 1 - i
+                    if i < len(post_v):
+                        breakout_vol_ratio = round(post_v[i] / max(best["baseVolMean"], 1e-10), 2)
+                    break
+
+            if price > best["baseHigh"]:
+                status = "fresh_breakout" if (breakout_bars_ago is not None and breakout_bars_ago <= 3) else "breakout_holding"
+            elif price < best["baseLow"]:
+                status = "breakdown"
+            elif price_pos >= 85:
+                status = "testing_base_high"
+            else:
+                status = "basing"
+
+            score = best["score"]
+            grade = "A+" if score >= 85 else "A" if score >= 75 else "B" if score >= 60 else "C"
+
+            # ── Setup confidence ────────────────────────────────────────────
+            # baseScore answers "was this a good base?". It does NOT answer
+            # "is this a trustworthy setup right now?" — a pair can score A on
+            # base quality while still trending hard (so it never consolidated)
+            # or while its band spans a 19x price range (so the band is
+            # meaningless). Those two blind spots are what this layer closes.
+            width_pct = round((band / max(best["baseMid"], 1e-10)) * 100.0, 1)
+            drift_abs = abs(best["driftPct"])
+
+            # 1. Consolidation validity (35) — the "after consolidation" test.
+            #    Flat = real base. Sloped = trend continuation wearing a costume.
+            conf = 35.0 * max(0.0, 1.0 - drift_abs / 20.0)
+            # 2. Band sanity (15) — ideal 15-50% wide; taper to 0 by 100%.
+            if width_pct < 8:
+                conf += 15.0 * (width_pct / 8.0)          # too tight = illiquid/flatline
+            elif width_pct <= 50:
+                conf += 15.0
+            else:
+                conf += 15.0 * max(0.0, (100.0 - width_pct) / 50.0)
+            # 3. Base quality (25) — reuses oscillation / touches / vol / depth.
+            conf += 25.0 * (score / 100.0)
+            # 4. Trigger proximity (15) — how actionable it is right now.
+            if status == "testing_base_high":
+                conf += 15.0
+            elif status == "fresh_breakout":
+                conf += 14.0
+            elif status in ("breakout_holding", "breakdown"):
+                conf += 10.0
+            else:  # basing — nearer an edge is more actionable than mid-band
+                conf += min(8.0, abs(price_pos - 50.0) / 50.0 * 8.0)
+            # 5. Volatility posture (10)
+            conf += {"strong_contraction": 10.0, "contracting": 7.0,
+                     "normal": 3.0}.get(best["atrState"], 0.0)
+
+            # Stale breakouts decay — a break 20 bars ago is not a fresh setup.
+            if breakout_bars_ago is not None and breakout_bars_ago > 10:
+                conf -= min(10.0, (breakout_bars_ago - 10) * 0.5)
+
+            setup_score = int(round(max(0.0, min(conf, 100.0))))
+
+            # Structural-invalidity caps. Subtracting points is not enough for
+            # these two: a band wider than the price is not a slightly worse
+            # base, it is not a base at all; and a "breakout" off a steeply
+            # sloped channel is trend continuation, not consolidation. Without
+            # caps a 180%-wide band still scored Medium purely on flat drift.
+            # Thresholds match the flags below, so any flagged row is capped.
+            if width_pct > 120:
+                setup_score = min(setup_score, 25)
+            elif width_pct > 80:
+                setup_score = min(setup_score, 40)
+            if drift_abs > 15:
+                setup_score = min(setup_score, 45)
+
+            confidence = ("High" if setup_score >= 75 else
+                          "Medium" if setup_score >= 55 else
+                          "Low" if setup_score >= 35 else "Weak")
+
+            if status in ("fresh_breakout", "breakout_holding", "testing_base_high"):
+                direction = "bullish"
+            elif status == "breakdown":
+                direction = "bearish"
+            else:
+                direction = "neutral"
+
+            # Plain-language reasons a row is downranked, so the number is
+            # never a black box.
+            flags = []
+            if drift_abs > 15:
+                flags.append("Still trending")
+            if width_pct > 80:
+                flags.append("Band too wide")
+            if best["atrState"] == "expanding":
+                flags.append("Vol expanding")
+            if breakout_bars_ago is not None and breakout_bars_ago > 10:
+                flags.append("Stale break")
+
+            sparkline = [float(c[i]) for i in range(max(0, n - 40), n)]
+            results.append({
+                "symbol": sym,
+                "price": price,
+                "timeframe": tf,
+                "exchange": exchange,
+                "market": market,
+                "baseLow": base_low,
+                "baseHigh": base_high,
+                "baseMid": base_mid,
+                "baseWidthPct": round((band / max(best["baseMid"], 1e-10)) * 100.0, 1),
+                "baseWindow": base_window,
+                "baseEndBarsAgo": base_end_bars_ago,
+                "pricePositionPct": price_pos,
+                "distanceToBaseHighPct": round(((best["baseHigh"] - price) / max(price, 1e-10)) * 100.0, 2),
+                "distanceToBaseLowPct": round(((price - best["baseLow"]) / max(price, 1e-10)) * 100.0, 2),
+                "excursionPct": round(((price - best["baseHigh"]) / max(best["baseHigh"], 1e-10)) * 100.0, 2) if price > best["baseHigh"] else 0.0,
+                "driftPct": best["driftPct"],
+                "midCrossings": best["crossings"],
+                "upperTouches": best["upperTouches"],
+                "lowerTouches": best["lowerTouches"],
+                "atrBaseRatio": best["atrBaseRatio"],
+                "atrState": best["atrState"],
+                "volumeBaseRatio": best["volumeBaseRatio"],
+                "volumeState": best["volumeState"],
+                "drawdownFromHighPct": round(drawdown, 1),
+                "windowHigh": round(window_high, 8),
+                "breakoutBarsAgo": breakout_bars_ago,
+                "breakoutVolumeRatio": breakout_vol_ratio,
+                "status": status,
+                "baseScore": score,
+                "baseGrade": grade,
+                "setupScore": setup_score,
+                "confidence": confidence,
+                "direction": direction,
+                "flags": flags,
+                "sparkline": sparkline,
+            })
+        except Exception as e:
+            errors += 1
+            print(f"[DEBUG] base_scan {sym} error: {e}")
+            continue
+
+    # Best setups first — confidence leads, base quality breaks ties.
+    results.sort(key=lambda x: (-x["setupScore"], -x["baseScore"], -x["drawdownFromHighPct"]))
+    print(f"[DEBUG] base_scan results={len(results)} errors={errors}")
+
+    if _tok_uid:
+        try: consume_tokens(_tok_uid, len(symbols))
+        except Exception as _te: print(f"[Tokens] base: {_te}")
+
+    return jsonify({
+        "ok": True,
+        "scanned": len(symbols),
+        "results": results,
+        "errors": errors,
+        "timeframe": tf,
+        "market": market,
+        "exchange": exchange,
+        "baseWindow": base_window,
+        "pairsPerCycle": pairs_per_cycle,
+        "nextRoundRobinIndex": BASE_ROUND_ROBIN_STATE["index"],
+        "usedClosedCandles": True,
+    })
+
+
 @app.route("/api/trending_scan", methods=["POST"])
 @login_required
 def api_trending_scan():
-    err = _guest_tab_check("trending")
-    if err is not None: return err
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
         return _daily_limit_response()
@@ -34082,8 +34750,6 @@ def _ath_window_label(window_hours: int) -> str:
 @app.route("/api/ath_atl_scan", methods=["POST"])
 @login_required
 def api_ath_atl_scan():
-    err = _guest_tab_check("ath_atl")
-    if err is not None: return err
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
         return _daily_limit_response()
@@ -35073,13 +35739,706 @@ def _bias_confluence(
     return {"ob": ob_conf, "fvg": fvg_conf, "fib": fib_conf}
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Rejection Blocks — detection + lifecycle (Phase 1)
+#
+# A rejection block is the band between the extreme WICK and the extreme BODY
+# of a liquidity sweep that was reclaimed and then confirmed:
+#
+#   bullish (a low was swept)    zone = [min(low) , min(open,close)]
+#   bearish (a high was swept)   zone = [max(open,close) , max(high)]
+#
+# The wick is where price went and was refused; the body is where it was
+# accepted. The band between them is the unfilled area — that is the block.
+# Using the whole candle range instead would make price permanently "inside"
+# the zone and render the retest logic meaningless.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_RB_TOUCH_CLEARANCE = 0.5   # mirrors _OB_TOUCH_CLEARANCE for consistent retest counting
+_RB_PENDING_SCORE_CAP = 79  # top of grade B — a pending block never grades A/A+
+
+# _grade_from_score hardcodes bias-shift wording ("A+ — Elite Bias Shift"),
+# which is the wrong detector's label on a block row.
+_RB_GRADE_LABEL = {
+    "A+": "A+ — Elite Rejection Block",
+    "A":  "A — Strong Rejection Block",
+    "B":  "B — Valid Rejection Block",
+    "C":  "C — Watch Only",
+    "D":  "D — Weak Block",
+}
+
+
+def _rb_config(tf: str, overrides: dict | None = None) -> dict:
+    """Timeframe-aware rejection-block defaults.
+
+    maxAgeCandles falls as the timeframe rises: a 1D candle carries far more
+    information than a 15m one, so a block stays relevant for fewer bars even
+    though that is a longer stretch of wall-clock time.
+    """
+    t = (tf or "").lower()
+    if t in ("1d", "12h"):
+        base = {"sweepMinPct": 0.15, "maxAgeCandles": 20, "swingLeft": 3, "swingRight": 3}
+    elif t in ("6h", "4h"):
+        base = {"sweepMinPct": 0.12, "maxAgeCandles": 30, "swingLeft": 3, "swingRight": 3}
+    elif t in ("2h", "1h"):
+        base = {"sweepMinPct": 0.10, "maxAgeCandles": 36, "swingLeft": 3, "swingRight": 3}
+    else:                                     # 30m, 15m and below
+        base = {"sweepMinPct": 0.08, "maxAgeCandles": 48, "swingLeft": 2, "swingRight": 2}
+
+    base.update({
+        "reclaimWindow":     2,               # candles allowed to reclaim the swept level
+        "confirmWindow":     3,               # candles allowed to produce the confirm candle
+        "maxTouches":        2,               # respected retests before the block is spent
+        # ATR-normalised "price ran away" guard. Tight by default: the point of
+        # the scan is catching a formation you can still act on, and a violent
+        # confirm candle can leave a brand-new block several ATR behind price.
+        "maxDistanceAtr":    1.5,
+        # Emit blocks that have pierced and reclaimed but not yet confirmed.
+        # ~65% of those go on to confirm, so they are a watch signal, not a
+        # finished setup — scoring caps them below the confirmed grades.
+        "allowPending":      False,
+        "localLookback":     2,               # candles before the pierce for local liquidity
+        "minBlockHeightPct": 0.02,            # reject degenerate/hairline zones
+        "sweepSources":      ["swing", "local"],
+        "volSweepMult":      1.5,             # sweep volume vs 20-candle average
+        "volRetestMax":      0.7,             # retest should arrive on LOWER volume
+        # Market regime — the anti-chop filter. 0.35 separated a mean-reverting
+        # range (1.6% above it) from a trend (61.3% above it) in simulation;
+        # the threshold itself wants tuning against live results.
+        "regimeWindow":      20,
+        "regimeMinRatio":    0.35,
+        # Over-extension: how far the drive into the swept level travelled.
+        # 0 disables it. This is about magnitude, not cleanliness.
+        "minPriorMovePct":   0.0,
+        "priorMoveCandles":  4,
+        "priorMoveStrength": "balanced",
+    })
+    if overrides:
+        base.update({k: v for k, v in overrides.items() if v is not None})
+    return base
+
+
+def _rb_efficiency_ratio(c: list, idx: int, win: int = 20) -> float | None:
+    """Kaufman efficiency ratio — |net move| / total path travelled.
+
+    This is the chop detector. A short "clean drive" check cannot do this job:
+    a 3-8 candle directional run appears constantly in noise, so requiring one
+    filters roughly as many trending setups as choppy ones. Path efficiency
+    separates them properly — a range covers ground going nowhere (~0.10),
+    a trend goes somewhere (~0.46).
+    """
+    start = max(0, idx - win)
+    seg = c[start:idx + 1]
+    if len(seg) < 3:
+        return None
+    net  = abs(seg[-1] - seg[0])
+    path = sum(abs(seg[k] - seg[k - 1]) for k in range(1, len(seg)))
+    return round(net / path, 4) if path > 0 else None
+
+
+def _rb_prior_drive(o: list, h: list, l: list, c: list, pierce_idx: int,
+                    direction: str, tf: str, cfg: dict) -> dict:
+    """The move that ran INTO the swept level, and where it started.
+
+    Reuses the bias engine's adaptive drive detector rather than growing a
+    second one. Magnitude is what matters for target potential — a 15% drop
+    into a swept low leaves room to retrace, a 2% drift does not — so netPct
+    is reported separately from the accept/reject verdict, which measures
+    cleanliness and is only worth scoring points.
+    """
+    want = "down" if direction == "bullish" else "up"
+    try:
+        pr = _detect_prior_move_adaptive(
+            o, h, l, c, pierce_idx, tf,
+            int(cfg.get("priorMoveCandles", 4)),
+            str(cfg.get("priorMoveStrength", "balanced")), "normal",
+        )
+    except Exception:
+        return {"found": False, "netPct": 0.0, "quality": "none",
+                "direction": None, "matchesSweep": False,
+                "originIndex": None, "originPrice": None}
+
+    start = pr.get("priorStart")
+    if start is None or start < 0:
+        start = max(0, pierce_idx - 4)
+    if direction == "bullish":
+        origin = max(h[start:pierce_idx + 1]) if pierce_idx >= start else None
+    else:
+        origin = min(l[start:pierce_idx + 1]) if pierce_idx >= start else None
+
+    return {
+        "found":        bool(pr.get("accepted")),
+        "quality":      pr.get("quality", "none"),
+        "direction":    pr.get("direction"),
+        "matchesSweep": pr.get("direction") == want,
+        "netPct":       round(abs(float(pr.get("netPct") or 0.0)), 3),
+        "candles":      pr.get("windowN"),
+        "originIndex":  start,
+        "originPrice":  round(origin, 8) if origin else None,
+    }
+
+
+def _rb_swing_levels(h: list, l: list, cfg: dict) -> tuple[list, list]:
+    """Confirmed swing highs/lows as (pivot_index, level, confirmed_at_index).
+
+    detect_pivots marks a pivot at i only once `right` bars have printed after
+    it, so the level is not knowable until i + right. Callers must not use a
+    swing before its confirmed_at bar or the detector reads the future.
+    """
+    ph, pl = detect_pivots(h, l, cfg["swingLeft"], cfg["swingRight"])
+    right = cfg["swingRight"]
+    highs = [(i, h[i], i + right) for i in range(len(ph)) if ph[i]]
+    lows  = [(i, l[i], i + right) for i in range(len(pl)) if pl[i]]
+    return highs, lows
+
+
+def _rb_latest_swing(pool: list, before_idx: int):
+    """Most recent swing level already CONFIRMED strictly before before_idx."""
+    best = None
+    for (pi, lvl, conf_at) in pool:
+        if conf_at < before_idx and pi < before_idx:
+            best = (pi, lvl)
+        elif conf_at >= before_idx:
+            break
+    return best
+
+
+def _rb_walk_lifecycle(o: list, h: list, l: list, c: list, v: list, ts: list,
+                       direction: str, rb_low: float, rb_high: float,
+                       formed_idx: int, cfg: dict, avg_vol: float) -> dict:
+    """Walk forward from the confirm candle and track what happened to the zone.
+
+    States: fresh → tested → respected → mitigated, or invalidated.
+      * a wick entering the zone counts as a TEST
+      * a close back out of the zone, in the block's direction, is RESPECTED
+      * only a CLOSE beyond the far edge invalidates; wicks through do not
+      * repeat touches need a clearance move away first, so one long visit is
+        not counted as several retests
+    """
+    n = len(c)
+    height   = max(rb_high - rb_low, 1e-12)
+    clear_by = _RB_TOUCH_CLEARANCE * height
+    is_bull  = direction == "bullish"
+    clear_level = (rb_high + clear_by) if is_bull else (rb_low - clear_by)
+
+    state          = "fresh"
+    touches        = 0
+    retests: list  = []
+    cleared        = True
+    invalidated_at = None
+    parked         = False   # last candle CLOSED inside the zone (still testing)
+
+    for j in range(formed_idx + 1, n):
+        if (is_bull and c[j] < rb_low) or ((not is_bull) and c[j] > rb_high):
+            state = "invalidated"
+            invalidated_at = ts[j]
+            break
+
+        inside = (l[j] <= rb_high) and (h[j] >= rb_low)
+        # A wick through the zone that closes back out is a reaction, not a
+        # candle sitting in the zone — only a close inside keeps it "testing".
+        parked = rb_low <= c[j] <= rb_high
+
+        if inside:
+            respected = (c[j] > rb_high) if is_bull else (c[j] < rb_low)
+            if cleared:
+                touches += 1
+                cleared = False
+                retests.append({
+                    "at":       ts[j],
+                    "index":    j,
+                    "reaction": "respected" if respected else "inside",
+                    "volRatio": round(v[j] / avg_vol, 2) if avg_vol > 0 else None,
+                })
+            elif respected and retests and retests[-1]["reaction"] == "inside":
+                # price sat in the zone then left in our favour — upgrade the
+                # open retest instead of opening a second one
+                retests[-1]["reaction"] = "respected"
+            state = "respected" if respected else "tested"
+        else:
+            if (is_bull and l[j] > clear_level) or ((not is_bull) and h[j] < clear_level):
+                cleared = True
+
+    if state != "invalidated":
+        if touches >= cfg["maxTouches"]:
+            state = "mitigated"     # spent, even if price is back in the zone
+        elif parked:
+            state = "tested"
+
+    return {
+        "state":         state,
+        "touches":       touches,
+        "retests":       retests,
+        "invalidatedAt": invalidated_at,
+        "respectedCount": sum(1 for r in retests if r["reaction"] == "respected"),
+    }
+
+
+def _detect_rejection_blocks(o: list, h: list, l: list, c: list, v: list, ts: list,
+                             tf: str, cfg: dict | None = None,
+                             atr: list | None = None,
+                             current_price: float | None = None) -> list:
+    """Find rejection blocks and resolve each one's lifecycle.
+
+    Phases (candle budgets, not fixed candle counts, so a pattern that takes
+    5 or 6 candles still qualifies as long as the structure holds):
+
+      A  pierce   — a wick extends beyond a liquidity level by >= sweepMinPct
+      B  reclaim  — within reclaimWindow, a candle CLOSES back on the origin
+                    side of that level, and price never keeps extending past
+                    the pierce (that would be a breakdown, not a sweep)
+      C  confirm  — within confirmWindow, a directional candle closes beyond
+                    the reclaim candle's close
+
+    Liquidity levels come from confirmed swings and/or the local highs/lows
+    right before the pierce. Only closed candles may be passed in.
+    """
+    cfg = cfg or _rb_config(tf)
+    n = len(c)
+    out: list = []
+    if n < cfg["swingLeft"] + cfg["swingRight"] + cfg["confirmWindow"] + 6:
+        return out
+
+    if atr is None:
+        atr = calc_atr(h, l, c, 14)
+
+    sources   = cfg.get("sweepSources") or ["swing", "local"]
+    use_swing = "swing" in sources
+    use_local = "local" in sources
+    swing_highs, swing_lows = _rb_swing_levels(h, l, cfg) if use_swing else ([], [])
+
+    sweep_frac = cfg["sweepMinPct"] / 100.0
+    look       = max(1, int(cfg["localLookback"]))
+
+    # Runs to n, not n-1: a pending block's pierce can BE the newest closed
+    # candle. A confirmed block still cannot form there — its phase C window is
+    # empty, so it falls through to the pending check and is dropped unless
+    # pending blocks are allowed.
+    for p in range(look + 1, n):
+        for direction in ("bullish", "bearish"):
+            is_bull = direction == "bullish"
+
+            levels: list = []
+            if use_swing:
+                sw = _rb_latest_swing(swing_lows if is_bull else swing_highs, p)
+                if sw:
+                    levels.append((sw[1], "swing"))
+            if use_local:
+                seg = l[p - look:p] if is_bull else h[p - look:p]
+                if seg:
+                    levels.append((min(seg) if is_bull else max(seg), "local"))
+
+            for lvl, src in levels:
+                if lvl <= 0:
+                    continue
+
+                # ── Phase A: the wick must genuinely pierce the level ──────
+                if is_bull:
+                    pierced = l[p] < lvl * (1.0 - sweep_frac)
+                else:
+                    pierced = h[p] > lvl * (1.0 + sweep_frac)
+                if not pierced:
+                    continue
+
+                # ── Phase B: reclaim the level without extending the pierce ─
+                r = None
+                for j in range(p, min(p + 1 + cfg["reclaimWindow"], n)):
+                    if j > p:
+                        # still extending past the pierce → breakdown, not a sweep
+                        if is_bull and l[j] < l[p] * (1.0 - sweep_frac):
+                            break
+                        if (not is_bull) and h[j] > h[p] * (1.0 + sweep_frac):
+                            break
+                    if (is_bull and c[j] > lvl) or ((not is_bull) and c[j] < lvl):
+                        r = j
+                        break
+                if r is None:
+                    continue
+
+                # ── Phase C: a directional candle closing beyond the reclaim ─
+                # Three outcomes matter separately: confirmed, failed outright
+                # (lost the sweep extreme on a close), or the confirm window has
+                # simply not finished yet — the last of those is "pending".
+                f = None
+                broke = False
+                for j in range(r + 1, min(r + 1 + cfg["confirmWindow"], n)):
+                    if is_bull and c[j] < l[p]:
+                        broke = True               # lost the sweep low on a close
+                        break
+                    if (not is_bull) and c[j] > h[p]:
+                        broke = True
+                        break
+                    if is_bull and c[j] > o[j] and c[j] > c[r]:
+                        f = j
+                        break
+                    if (not is_bull) and c[j] < o[j] and c[j] < c[r]:
+                        f = j
+                        break
+
+                pending = False
+                if f is None:
+                    if broke:
+                        continue                   # setup failed, not pending
+                    if (r + cfg["confirmWindow"]) < (n - 1):
+                        continue                   # window elapsed with no confirm
+                    if not cfg.get("allowPending"):
+                        continue
+                    # Provisional block: the zone covers pierce→reclaim only and
+                    # may widen once the confirm candle prints.
+                    pending = True
+                    f = r
+
+                # ── Zone: extreme wick ↔ extreme body across the block ──────
+                span = range(p, f + 1)
+                if is_bull:
+                    rb_low  = min(l[i] for i in span)
+                    rb_high = min(min(o[i], c[i]) for i in span)
+                else:
+                    rb_high = max(h[i] for i in span)
+                    rb_low  = max(max(o[i], c[i]) for i in span)
+                if rb_high <= rb_low:
+                    continue                       # no wick beyond the bodies
+                height_pct = (rb_high - rb_low) / max(abs(rb_low), 1e-12) * 100.0
+                if height_pct < cfg["minBlockHeightPct"]:
+                    continue
+
+                vol_lb  = min(20, p)
+                avg_vol = sum(v[p - vol_lb:p]) / vol_lb if vol_lb > 0 else 0.0
+
+                life = _rb_walk_lifecycle(o, h, l, c, v, ts, direction,
+                                          rb_low, rb_high, f, cfg, avg_vol)
+                # "pending" replaces "fresh" only — a pending block that already
+                # broke or got tested keeps the state the walk resolved, so the
+                # dead-block filter still sees it.
+                if pending and life["state"] == "fresh":
+                    life["state"] = "pending"
+
+                age   = (n - 1) - f
+                max_age = max(1, int(cfg["maxAgeCandles"]))
+                fresh   = max(0.0, min(1.0, 1.0 - age / max_age))
+                px      = current_price if current_price is not None else c[-1]
+                atr_v   = atr[-1] if atr and atr[-1] else None
+                if px > rb_high:
+                    gap = px - rb_high
+                elif px < rb_low:
+                    gap = rb_low - px
+                else:
+                    gap = 0.0
+                dist_atr = round(gap / atr_v, 2) if atr_v else None
+
+                sweep_depth = (abs(lvl - (l[p] if is_bull else h[p]))
+                               / max(abs(lvl), 1e-12) * 100.0)
+
+                # ── Context: was this a trend or chop, and how far did the
+                # move into the sweep travel? ─────────────────────────────
+                er = _rb_efficiency_ratio(c, p, int(cfg["regimeWindow"]))
+                regime = {
+                    "efficiencyRatio": er,
+                    "window":          int(cfg["regimeWindow"]),
+                    "trending":        (er is not None and er >= cfg["regimeMinRatio"]),
+                    "label":           ("trending" if (er is not None and er >= cfg["regimeMinRatio"])
+                                        else "choppy" if er is not None else "unknown"),
+                }
+                drive = _rb_prior_drive(o, h, l, c, p, direction, tf, cfg)
+
+                # First natural target: back to where the drive started. Entry
+                # is the near edge of the zone, stop is the far edge.
+                entry = rb_high if is_bull else rb_low
+                risk  = rb_high - rb_low
+                tgt   = drive.get("originPrice")
+                rr    = None
+                if tgt and risk > 0:
+                    reward = (tgt - entry) if is_bull else (entry - tgt)
+                    if reward > 0:
+                        rr = round(reward / risk, 2)
+                target = {
+                    "level":     tgt,
+                    "entry":     round(entry, 8),
+                    "rr":        rr,
+                    "distancePct": (round(abs(tgt - entry) / entry * 100, 2)
+                                    if tgt and entry else None),
+                }
+
+                out.append({
+                    "direction":      direction,
+                    "pending":        pending,
+                    "rbHigh":         round(rb_high, 8),
+                    "rbLow":          round(rb_low, 8),
+                    "heightPct":      round(height_pct, 4),
+                    "sweptLevel":     round(lvl, 8),
+                    "sweepSource":    src,
+                    "sweepDepthPct":  round(sweep_depth, 4),
+                    "pierceIndex":    p,
+                    "reclaimIndex":   r,
+                    "formedIndex":    f,
+                    "formedAt":       ts[f],
+                    "blockCandles":   f - p + 1,
+                    "ageCandles":     age,
+                    "freshness":      round(fresh, 3),
+                    "expired":        age > max_age,
+                    "distanceAtr":    dist_atr,
+                    "far":            (dist_atr is not None
+                                       and dist_atr > cfg["maxDistanceAtr"]),
+                    "regime":         regime,
+                    "priorDrive":     drive,
+                    "target":         target,
+                    "state":          life["state"],
+                    "retestCount":    life["touches"],
+                    "respectedCount": life["respectedCount"],
+                    "retests":        life["retests"],
+                    "invalidatedAt":  life["invalidatedAt"],
+                    "volume": {
+                        "sweepRatio":   round(v[p] / avg_vol, 2) if avg_vol > 0 else None,
+                        "reclaimRatio": round(v[r] / avg_vol, 2) if avg_vol > 0 else None,
+                        "avgVolume":    round(avg_vol, 4),
+                    },
+                })
+
+    return _rb_dedupe(out)
+
+
+def _rb_dedupe(blocks: list, overlap_thresh: float = 0.5) -> list:
+    """Collapse same-direction blocks whose zones substantially overlap.
+
+    Consecutive candles routinely produce near-identical blocks. Keep the
+    freshest (latest formation); on a tie prefer the swing-sourced one, since
+    a confirmed swing is stronger liquidity than a two-candle local extreme.
+    """
+    def _rank(b):
+        return (b["formedIndex"], 1 if b["sweepSource"] == "swing" else 0)
+
+    kept: list = []
+    for b in sorted(blocks, key=_rank, reverse=True):
+        dup = False
+        for k in kept:
+            if k["direction"] != b["direction"]:
+                continue
+            lo = max(k["rbLow"], b["rbLow"])
+            hi = min(k["rbHigh"], b["rbHigh"])
+            inter = max(0.0, hi - lo)
+            smaller = min(k["rbHigh"] - k["rbLow"], b["rbHigh"] - b["rbLow"])
+            if smaller > 0 and inter / smaller >= overlap_thresh:
+                dup = True
+                break
+        if not dup:
+            kept.append(b)
+    kept.sort(key=lambda x: x["formedIndex"], reverse=True)
+    return kept
+
+
+def _rb_is_dead(blk: dict) -> bool:
+    """A block that can no longer be traded: spent, broken, stale or far away."""
+    return (blk["state"] in ("invalidated", "mitigated")
+            or blk["expired"] or blk["far"])
+
+
+def _score_rejection_block(blk: dict, cfg: dict, volume_mode: str) -> dict:
+    """Score 0-100 with a readable breakdown, graded by _grade_from_score.
+
+    Weighting: sweep quality 25, formation tightness 15, volume 20,
+    lifecycle state 25, freshness 15. Freshness is a component here rather
+    than a multiplier applied on top, so age is never counted twice.
+    """
+    pts = 0
+    bd: list[str] = []
+
+    # ── Sweep quality (20) ────────────────────────────────────────────────
+    if blk["sweepSource"] == "swing":
+        pts += 12; bd.append("+12 swept a confirmed swing level")
+    else:
+        pts += 6;  bd.append("+6 swept a local extreme")
+
+    depth = blk["sweepDepthPct"]
+    if cfg["sweepMinPct"] <= depth <= 2.0:
+        pts += 8;  bd.append(f"+8 sweep depth {depth:.2f}% in range")
+    else:
+        pts += 3;  bd.append(f"+3 sweep depth {depth:.2f}% outside ideal range")
+
+    # ── Formation tightness (10) ──────────────────────────────────────────
+    bc = blk["blockCandles"]
+    if bc <= 3:
+        pts += 10; bd.append(f"+10 tight {bc}-candle formation")
+    elif bc <= 5:
+        pts += 6;  bd.append(f"+6 {bc}-candle formation")
+    else:
+        pts += 3;  bd.append(f"+3 slow {bc}-candle formation")
+
+    # ── Context: regime + over-extension (15) ─────────────────────────────
+    # Regime is the anti-chop signal; prior-move magnitude is the room-to-target
+    # signal. Drive *quality* only nudges, because it cannot tell chop from trend.
+    reg = blk.get("regime") or {}
+    er  = reg.get("efficiencyRatio")
+    if er is None:
+        pts += 4; bd.append("+4 regime unknown (not enough history)")
+    elif reg.get("trending"):
+        pts += 8; bd.append(f"+8 trending market (efficiency {er:.2f})")
+    elif er >= cfg["regimeMinRatio"] * 0.6:
+        pts += 4; bd.append(f"+4 mixed regime (efficiency {er:.2f})")
+    else:
+        bd.append(f"+0 choppy market (efficiency {er:.2f})")
+
+    drv = blk.get("priorDrive") or {}
+    net = drv.get("netPct") or 0.0
+    if drv.get("matchesSweep") and net >= 8.0:
+        pts += 5; bd.append(f"+5 over-extended {net:.1f}% drive into the sweep")
+    elif drv.get("matchesSweep") and net >= 3.0:
+        pts += 3; bd.append(f"+3 {net:.1f}% drive into the sweep")
+    if drv.get("found") and drv.get("matchesSweep"):
+        pts += 2; bd.append(f"+2 {drv.get('quality')} drive quality")
+
+    # ── Volume (20) ───────────────────────────────────────────────────────
+    vol = blk.get("volume") or {}
+    sr  = vol.get("sweepRatio")
+    rr  = vol.get("reclaimRatio")
+    tr  = None
+    for r in reversed(blk.get("retests") or []):
+        if r.get("volRatio") is not None:
+            tr = r["volRatio"]
+            break
+
+    if volume_mode == "off":
+        pts += 10; bd.append("+10 volume scoring off (neutral credit)")
+    else:
+        if sr is not None and sr >= cfg["volSweepMult"]:
+            pts += 8;  bd.append(f"+8 sweep volume {sr:.1f}x average")
+        elif sr is not None and sr < 0.8:
+            pts -= 10; bd.append(f"-10 dead sweep, volume only {sr:.1f}x average")
+        if sr is not None and rr is not None and rr >= sr:
+            pts += 5;  bd.append(f"+5 reclaim absorbed the sweep ({rr:.1f}x)")
+        if tr is not None and tr <= cfg["volRetestMax"]:
+            pts += 7;  bd.append(f"+7 dry retest, volume {tr:.1f}x average")
+
+    # ── Lifecycle state (25) ──────────────────────────────────────────────
+    state_pts = {"respected": 25, "fresh": 18, "tested": 12,
+                 "pending": 10, "mitigated": 5, "invalidated": 0}
+    st = blk["state"]
+    pts += state_pts.get(st, 10)
+    bd.append(f"+{state_pts.get(st, 10)} state: {st}")
+
+    # ── Freshness (10) ────────────────────────────────────────────────────
+    fp = int(round(10 * blk["freshness"]))
+    pts += fp
+    bd.append(f"+{fp} freshness {blk['freshness']:.2f} ({blk['ageCandles']} candles old)")
+
+    score = max(0, min(100, pts))
+    # A pending block has not produced its confirm candle, so it cannot earn a
+    # confirmed grade no matter how good the sweep looked. Cap it inside B.
+    if blk.get("pending") and score > _RB_PENDING_SCORE_CAP:
+        bd.append(f"capped at {_RB_PENDING_SCORE_CAP} — awaiting confirmation candle")
+        score = _RB_PENDING_SCORE_CAP
+    return {"score": score, "breakdown": bd,
+            "volumeRatios": {"sweep": sr, "reclaim": rr, "retest": tr}}
+
+
+def _rb_reason_chain(blk: dict, tf: str) -> list:
+    """Human-readable account of how the block formed and what happened since."""
+    is_bull = blk["direction"] == "bullish"
+    side    = "low" if is_bull else "high"
+    chain = [
+        f"Swept the {blk['sweepSource']} {side} at {blk['sweptLevel']:.6f}"
+        f" by {blk['sweepDepthPct']:.2f}%",
+        f"Reclaimed the level and confirmed over {blk['blockCandles']} candles",
+        f"Rejection block zone {blk['rbLow']:.6f} - {blk['rbHigh']:.6f}"
+        f" (wick to body, {blk['heightPct']:.2f}% tall)",
+    ]
+    vol = blk.get("volume") or {}
+    if vol.get("sweepRatio") is not None:
+        chain.append(f"Sweep volume {vol['sweepRatio']:.1f}x the 20-candle average")
+    if blk["retestCount"]:
+        resp = blk["respectedCount"]
+        chain.append(f"{blk['retestCount']} retest(s), {resp} respected")
+        last = blk["retests"][-1] if blk["retests"] else None
+        if last and last.get("volRatio") is not None:
+            chain.append(f"Latest retest volume {last['volRatio']:.1f}x average")
+    else:
+        chain.append("Not retested yet — zone is untouched")
+    chain.append(
+        f"Invalidation: close {'below' if is_bull else 'above'}"
+        f" {(blk['rbLow'] if is_bull else blk['rbHigh']):.6f}")
+    chain.append(f"Suggested confirmation TF: {_suggested_conf_tf(tf)}")
+    return chain
+
+
+def _rb_build_row(blk: dict, sym: str, tf: str, cfg: dict, volume_mode: str,
+                  closes: list, current_price: float | None) -> dict:
+    """Shape a block into the same row contract the Bias Shift tab already uses.
+
+    Keeping score / grade / reasonChain / invalidation* identical to bias rows
+    means the table, insight panel, alert mapper and Live Monitor payload all
+    work without a parallel code path.
+    """
+    is_bull  = blk["direction"] == "bullish"
+    scored   = _score_rejection_block(blk, cfg, volume_mode)
+    score    = scored["score"]
+    graded   = _grade_from_score(score)
+    inv_level = blk["rbLow"] if is_bull else blk["rbHigh"]
+
+    px = current_price if current_price is not None else closes[-1]
+    closed_inv = blk["state"] == "invalidated"
+    live_br    = (px < inv_level) if is_bull else (px > inv_level)
+    if closed_inv:
+        inv_status = "closed_invalidated"
+    elif live_br:
+        inv_status = "live_breached"
+    else:
+        inv_status = "valid"
+    dist_pct = (round((px - inv_level) / px * 100, 4) if is_bull
+                else round((inv_level - px) / px * 100, 4)) if px else None
+
+    confidence = "Strong" if score >= 85 else "Moderate" if score >= 65 else "Weak"
+    label = "Bullish Rejection Block" if is_bull else "Bearish Rejection Block"
+    if blk.get("pending"):
+        label = "Pending " + label
+
+    return {
+        "detector":      "rejection_block",
+        "symbol":        sym,
+        "price":         round(closes[-1], 8),
+        "currentPrice":  current_price,
+        "timeframe":     tf,
+        "bias":          blk["direction"],
+        "direction":     blk["direction"],
+        "biasDirection": blk["direction"],
+        "signal":        "REJECTION_BLOCK",
+        "setupType":     label,
+        "pattern":       f"{label} · {blk['sweepSource']} sweep",
+        "detail": (
+            f"Zone {blk['rbLow']:.6f}-{blk['rbHigh']:.6f}"
+            f" · {blk['state']}"
+            f" · {blk['retestCount']} retest(s)"
+            f" · Grade {graded['grade']} ({score})"
+            f" · {blk['ageCandles']}c old"
+        ),
+        "score":          score,
+        "grade":          graded["grade"],
+        "gradeLabel":     _RB_GRADE_LABEL.get(graded["grade"], graded["gradeLabel"]),
+        "scoreBreakdown": scored["breakdown"],
+        "confidence":     confidence,
+        # lifecycle state doubles as the confirmation column the tab renders
+        "confirmationStatus": "confirmed" if blk["state"] == "respected"
+                              else "early_unconfirmed",
+        "invalidationLevel":        inv_level,
+        "invalidationText": (f"Invalid below {inv_level:.6f}" if is_bull
+                             else f"Invalid above {inv_level:.6f}"),
+        "invalidationStatus":       inv_status,
+        "invalidationBreachedLive": bool(live_br and not closed_inv),
+        "invalidationClosed":       closed_inv,
+        "invalidationDistancePct":  dist_pct,
+        "signalCandleTime":         blk["formedAt"],
+        "signalCandleOffset":       blk["ageCandles"],
+        "suggestedConfirmationTf":  _suggested_conf_tf(tf),
+        "reasonChain":              _rb_reason_chain(blk, tf),
+        "sparkline": [float(closes[i]) for i in range(max(0, len(closes) - 24), len(closes))],
+        "zoneHigh": blk["rbHigh"],
+        "zoneLow":  blk["rbLow"],
+        "rb":       blk,
+    }
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 @app.route("/api/bias_scan", methods=["POST"])
 @login_required
 def api_bias_scan():
-    err = _guest_tab_check("bias")
-    if err is not None: return err
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
         return _daily_limit_response()
@@ -35097,22 +36456,68 @@ def api_bias_scan():
     use_volume_filter  = volume_filter_mode == "required"
     vol_multiplier     = float(payload.get("volumeMultiplier", 1.5))
 
+    # ── Which detectors run ───────────────────────────────────────────────
+    # "detect" is the single switch: bias | rejection_block | both. Legacy
+    # payloads that only set rejectionBlock.enabled still mean "both", and a
+    # payload with neither keeps the original bias-only behaviour.
+    _rb_payload = payload.get("rejectionBlock") or {}
+    detect_mode = payload.get("detect")
+    if detect_mode not in ("bias", "rejection_block", "both"):
+        detect_mode = "both" if bool(_rb_payload.get("enabled", False)) else "bias"
+    run_bias   = detect_mode in ("bias", "both")
+    rb_enabled = detect_mode in ("rejection_block", "both")
+
+    # confirmed | both | pending — whether a block that has pierced and
+    # reclaimed but not yet confirmed is surfaced as an early watch signal.
+    rb_formation_mode = _rb_payload.get("formationMode", "confirmed")
+    if rb_formation_mode not in ("confirmed", "both", "pending"):
+        rb_formation_mode = "confirmed"
+
+    # off | optional | required — the anti-chop gate
+    rb_regime_mode = _rb_payload.get("regimeMode", "off")
+    if rb_regime_mode not in ("off", "optional", "required"):
+        rb_regime_mode = "off"
+    rb_min_prior_move = float(_rb_payload.get("minPriorMovePct") or 0.0)
+
+    rb_signal_mode = _rb_payload.get("signalMode", "formation")   # formation | retest
+    rb_include_dead = bool(_rb_payload.get("includeDead", False))
+    rb_volume_mode  = _rb_payload.get("volumeMode", "optional")   # off | optional | required
+    rb_overrides = {
+        k: _rb_payload.get(k) for k in (
+            "sweepMinPct", "maxAgeCandles", "maxTouches", "reclaimWindow",
+            "confirmWindow", "maxDistanceAtr", "localLookback",
+            "minBlockHeightPct", "sweepSources", "volSweepMult", "volRetestMax",
+            "swingLeft", "swingRight", "regimeWindow", "regimeMinRatio",
+            "minPriorMovePct", "priorMoveCandles", "priorMoveStrength",
+        ) if _rb_payload.get(k) is not None
+    }
+    if rb_enabled:
+        rb_overrides["allowPending"] = rb_formation_mode in ("both", "pending")
+    rb_cfg = _rb_config(tf, rb_overrides) if rb_enabled else None
+
     if bias_mode == "normal":
         # Fix #2: presets set candle-quality params only; detectionMode stays from payload
         p = _bias_normal_presets(bias_strength)
         prior_move_n             = p["prior_move_n"]
         signal_search_n          = p["signal_search_n"]
-        min_prior_checks         = p["min_prior_checks"]
         min_wick_pct             = p["min_wick_pct"]
         min_body_pct             = p["min_body_pct"]
         require_close_beyond_mid = p["require_close_beyond_mid"]
     else:
         prior_move_n             = max(1, int(payload.get("priorMoveCandles", 3)))
         signal_search_n          = max(1, int(payload.get("signalSearchCandles", 2)))
-        min_prior_checks         = 2
         min_wick_pct             = float(payload.get("minWickPct", 35)) / 100.0
         min_body_pct             = float(payload.get("minBodyPct", 15)) / 100.0
         require_close_beyond_mid = bool(payload.get("requireCloseBeyondMidpoint", False))
+
+    # Confirmed mode needs at least one candle AFTER the rejection candle to
+    # confirm against. With signal_search_n == 1 the only candidate is the last
+    # closed candle, so the confirmation loop has nothing to scan and every
+    # setup is dropped — Confirmed returned zero results on Balanced/Strong.
+    signal_search_floor_applied = False
+    if detection_mode == "confirmed" and signal_search_n < 2:
+        signal_search_n = 2
+        signal_search_floor_applied = True
 
     minimum_grade = payload.get("minimumGrade", "B+")
 
@@ -35127,9 +36532,14 @@ def api_bias_scan():
     pairs_per_cycle = max(5, min(100, int(payload.get("pairsPerCycle", 20))))
     exchange        = payload.get("exchange", "binance").lower()
 
-    # Per-user cursor key — prevents different users/settings from sharing state
-    username   = session.get("username", "anonymous")
-    cursor_key = f"{username}|{exchange}|{market}|{tf}"
+    # Per-user cursor key — prevents different users/settings from sharing state.
+    # cursorScope separates callers that scan on their own cadence (the dashboard
+    # tile) from the Bias tab, so they never advance each other's round-robin.
+    # scan_mode is part of the key so the Full-market and Selected round-robins
+    # keep independent positions instead of yanking each other mid-list.
+    username     = session.get("username", "anonymous")
+    cursor_scope = str(payload.get("cursorScope", "scanner"))[:32]
+    cursor_key   = f"{username}|{exchange}|{market}|{tf}|{cursor_scope}|{scan_mode}"
     market_coverage = None
 
     if scan_mode == "market":
@@ -35153,8 +36563,37 @@ def api_bias_scan():
             "cycleComplete":  cycle_complete,
         }
     elif passed_symbols:
-        # Selected Pairs mode — use only what the frontend sent
-        symbols = passed_symbols
+        # Selected Pairs — round-robin the chosen universe in the same batch
+        # size as Full market. This branch used to scan every selected symbol
+        # and ignore pairsPerCycle entirely, so asking for 24 scanned all 200.
+        total_pairs = len(passed_symbols)
+        if total_pairs <= pairs_per_cycle:
+            symbols = passed_symbols
+            market_coverage = {
+                "mode":           "single_batch",
+                "totalPairs":     total_pairs,
+                "batchSize":      len(symbols),
+                "startIndex":     1,
+                "endIndex":       total_pairs,
+                "nextStartIndex": 1,
+                "cycleComplete":  True,
+            }
+        else:
+            start    = BIAS_SCAN_CURSOR.get(cursor_key, 0) % total_pairs
+            symbols  = passed_symbols[start:start + pairs_per_cycle]
+            next_cur = (start + pairs_per_cycle) % total_pairs
+            BIAS_SCAN_CURSOR[cursor_key] = next_cur
+            print(f"[BIAS_SCAN] round_robin(selected) user={username} tf={tf} "
+                  f"batch={start+1}-{start+len(symbols)}/{total_pairs}")
+            market_coverage = {
+                "mode":           "round_robin",
+                "totalPairs":     total_pairs,
+                "batchSize":      len(symbols),
+                "startIndex":     start + 1,
+                "endIndex":       start + len(symbols),
+                "nextStartIndex": next_cur + 1,
+                "cycleComplete":  (start + pairs_per_cycle) >= total_pairs,
+            }
     else:
         # Selected Pairs with nothing selected — tell the user clearly
         return jsonify({
@@ -35163,7 +36602,14 @@ def api_bias_scan():
         }), 400
 
     results = []
+    rb_rows: list = []          # rejection-block rows, merged in before filtering
     fetch_limit = prior_move_n + signal_search_n + 30
+    if rb_enabled and rb_cfg:
+        # Blocks need swing lookback + the whole age budget + room to walk the
+        # lifecycle forward. Without this they silently vanish at the window edge.
+        fetch_limit = max(fetch_limit,
+                          rb_cfg["swingLeft"] + rb_cfg["swingRight"]
+                          + rb_cfg["maxAgeCandles"] + 60)
 
     diagnostics: dict = {
         "symbolsRequested":         len(symbols),
@@ -35193,21 +36639,67 @@ def api_bias_scan():
             "chopRejected":    0,
         },
         "settingsUsed": {
-            "timeframe":      tf,
-            "mode":           bias_mode,
-            "biasStrength":   bias_strength,
-            "detectionMode":  detection_mode,
-            "confluenceMode": confluence_mode,
-            "minimumGrade":   minimum_grade,
-            "volumeFilter":   volume_filter_mode,
-            "scanMode":       scan_mode,
-            "pairsPerCycle":  pairs_per_cycle,
+            "timeframe":        tf,
+            "mode":             bias_mode,
+            "biasStrength":     bias_strength,
+            "detectionMode":    detection_mode,
+            "confluenceMode":   confluence_mode,
+            "minimumGrade":     minimum_grade,
+            "volumeFilter":     volume_filter_mode,
+            "scanMode":         scan_mode,
+            "pairsPerCycle":    pairs_per_cycle,
+            "priorMoveCandles": prior_move_n,
+            "signalSearchCandles": signal_search_n,
+            "signalSearchFloorApplied": signal_search_floor_applied,
+            "detect":                   detect_mode,
+            "rejectionBlockEnabled":    rb_enabled,
+            "rejectionBlockSignalMode": rb_signal_mode if rb_enabled else None,
+            "rejectionBlockFormationMode": rb_formation_mode if rb_enabled else None,
+            "rejectionBlockMaxDistanceAtr": (rb_cfg or {}).get("maxDistanceAtr"),
+            "rejectionBlockRegimeMode":     rb_regime_mode if rb_enabled else None,
+            "rejectionBlockRegimeMinRatio": (rb_cfg or {}).get("regimeMinRatio"),
+            "rejectionBlockMinPriorMovePct": rb_min_prior_move if rb_enabled else None,
+            "rejectionBlockVolumeMode": rb_volume_mode if rb_enabled else None,
         },
     }
+    if rb_enabled:
+        diagnostics["rejectionBlocks"] = {
+            "detected":   0,   # raw formations found
+            "dead":       0,   # invalidated / mitigated / expired / ran away
+            "formationMode": 0,  # dropped by the confirmed vs pending toggle
+            "regime":     0,   # dropped by the choppy-market gate
+            "priorMove":  0,   # dropped by the minimum prior-move requirement
+            "signalMode": 0,   # dropped by the formation vs retest toggle
+            "volume":     0,   # dropped by volumeMode = required
+            "returned":   0,   # survived into the results list
+            "byState":    {},
+        }
+
+    # Network is the bottleneck here — fetch every symbol's candles in parallel
+    # (same worker count as /api/scan), then analyse sequentially because the
+    # analysis loop mutates shared diagnostics counters.
+    def _bias_fetch(_sym: str):
+        try:
+            return _sym, get_klines_exchange(_sym, tf, fetch_limit, market, exchange), False
+        except Exception as _fe:
+            print(f"[DEBUG] bias_scan {_sym} fetch error: {_fe}")
+            return _sym, None, True
+
+    klines_by_sym: dict = {}
+    fetch_errors: set = set()
+    if symbols:
+        with ThreadPoolExecutor(max_workers=min(10, len(symbols))) as _pool:
+            for _s, _kl, _err in _pool.map(_bias_fetch, symbols):
+                klines_by_sym[_s] = _kl
+                if _err:
+                    fetch_errors.add(_s)
 
     for sym in symbols:
         try:
-            kl = get_klines_exchange(sym, tf, fetch_limit, market, exchange)
+            if sym in fetch_errors:
+                diagnostics["rejected"]["errors"] += 1
+                continue
+            kl = klines_by_sym.get(sym)
             if not kl or len(kl) < prior_move_n + signal_search_n + 2:
                 diagnostics["rejected"]["notEnoughCandles"] += 1
                 continue
@@ -35229,6 +36721,48 @@ def api_bias_scan():
             avg_vol = sum(v[n - vol_lb:n]) / max(vol_lb, 1) if vol_lb > 0 else 0
 
             diagnostics["symbolsScanned"] += 1
+
+            # ── Rejection Block sub-detector ──────────────────────────────
+            # Independent of the bias-shift search below: a symbol can have a
+            # rejection block without a bias shift and vice versa.
+            if rb_enabled and rb_cfg:
+                _rbd = diagnostics["rejectionBlocks"]
+                for _blk in _detect_rejection_blocks(o, h, l, c, v, ts, tf,
+                                                     cfg=rb_cfg,
+                                                     current_price=current_price):
+                    _rbd["detected"] += 1
+                    _rbd["byState"][_blk["state"]] = _rbd["byState"].get(_blk["state"], 0) + 1
+
+                    if not rb_include_dead and _rb_is_dead(_blk):
+                        _rbd["dead"] += 1
+                        continue
+                    # "pending" wants only the unconfirmed watch signals
+                    if rb_formation_mode == "pending" and not _blk.get("pending"):
+                        _rbd["formationMode"] += 1
+                        continue
+                    # "retest" only wants blocks price has actually returned to
+                    if rb_signal_mode == "retest" and _blk["retestCount"] < 1:
+                        _rbd["signalMode"] += 1
+                        continue
+                    if rb_volume_mode == "required":
+                        _sr = (_blk.get("volume") or {}).get("sweepRatio")
+                        if _sr is None or _sr < rb_cfg["volSweepMult"]:
+                            _rbd["volume"] += 1
+                            continue
+                    if rb_regime_mode == "required" and not (
+                            _blk.get("regime") or {}).get("trending"):
+                        _rbd["regime"] += 1
+                        continue
+                    if rb_min_prior_move > 0:
+                        _dv = _blk.get("priorDrive") or {}
+                        if not _dv.get("matchesSweep") or \
+                                (_dv.get("netPct") or 0.0) < rb_min_prior_move:
+                            _rbd["priorMove"] += 1
+                            continue
+                    rb_rows.append(_rb_build_row(_blk, sym, tf, rb_cfg,
+                                                 rb_volume_mode, c, current_price))
+                    _rbd["returned"] += 1
+
             best: dict | None = None
 
             # Per-symbol rejection trackers for diagnostics
@@ -35240,7 +36774,9 @@ def api_bias_scan():
             _d_vol_miss       = False
             _d_conf_miss      = False
 
-            for sig_offset in range(signal_search_n):
+            # detect="rejection_block" skips the bias search entirely — the
+            # empty range keeps this cheap without re-indenting the body.
+            for sig_offset in (range(signal_search_n) if run_bias else ()):
                 sig_idx = n - 1 - sig_offset
                 if sig_idx < prior_move_n + 1:
                     continue
@@ -35477,6 +37013,7 @@ def api_bias_scan():
 
                 candidate = {
                     # ── compat fields ──
+                    "detector":     "bias_shift",
                     "symbol":       sym,
                     "price":        round(c[-1], 8),
                     "timeframe":    tf,
@@ -35557,6 +37094,7 @@ def api_bias_scan():
                     best = candidate
 
             if best is not None:
+                diagnostics["setupsFoundBeforeFilters"] += 1
                 # Compute live / closed invalidation status
                 inv_level  = best["invalidationLevel"]
                 inv_dir    = best["bias"]
@@ -35595,8 +37133,10 @@ def api_bias_scan():
                     diagnostics["rejected"]["invalidated"] += 1
                 else:
                     results.append(best)
-            else:
-                # Attribute primary rejection reason (priority order)
+            elif run_bias:
+                # Attribute primary rejection reason (priority order).
+                # Guarded so an RB-only scan does not log a bias rejection for
+                # every symbol it never looked at.
                 if not _d_had_prior and _d_weak_prior:
                     diagnostics["rejected"]["noCleanPriorDrive"] += 1
                     diagnostics["rejected"]["noAdaptivePriorDrive"] += 1
@@ -35626,8 +37166,15 @@ def api_bias_scan():
         elif _q == "good":    diagnostics["adaptivePriorDrive"]["goodAccepted"]    += 1
         elif _q == "impulse": diagnostics["adaptivePriorDrive"]["impulseAccepted"] += 1
 
+    # Rejection blocks join the same result list so they share the grade
+    # filter, the sort, and every downstream consumer (table, alerts, LM).
+    if rb_rows:
+        diagnostics["setupsFoundBeforeFilters"] += len(rb_rows)
+        results.extend(rb_rows)
+
     # Phase 3: apply minimum grade filter, then sort by best setup first
-    diagnostics["setupsFoundBeforeFilters"] = len(results)
+    # setupsFoundBeforeFilters is counted per accepted candidate inside the loop,
+    # so it stays a true "found" total ahead of the invalidation + grade filters.
     _before_grade = len(results)
     results = [r for r in results if _grade_passes_filter(r.get("grade", "D"), minimum_grade)]
     diagnostics["rejected"]["minimumGrade"] = _before_grade - len(results)
@@ -36295,121 +37842,180 @@ def api_zone_liquidity():
     if zone_top <= 0 or zone_bottom <= 0 or zone_top <= zone_bottom:
         return jsonify({"error": "could not detect OB zone"}), 200
 
-    # ── Ensure full order book stream is running ──
-    # Works for both watchlist pairs (already streaming) and
-    # scan page pairs (starts on-demand, waits up to 4s, auto-stops after 2min)
-    book_ready = ensure_ob_stream(symbol, wait_sec=4.0)
+    # ── Kick off Binance WS so _lm_build_ob_wall_map gets the live book ──
+    try:
+        ensure_ob_stream(symbol, wait_sec=4.0)
+    except Exception:
+        pass
 
-    if book_ready:
-        ob_result = get_ob_zone_levels(symbol, zone_top, zone_bottom, ob_type)
-        if ob_result.get("ready"):
-            return jsonify({
-                "symbol":         symbol,
-                "ob_type":        ob_type,
-                "zone_top":       ob_result.get("zone_top", round(zone_top, 8)),
-                "zone_bottom":    ob_result.get("zone_bottom", round(zone_bottom, 8)),
-                "side":           "bids" if ob_type == "bullish" else "asks",
-                "ladder":         ob_result.get("ladder", []),
-                "center":         ob_result.get("center", ""),
-                "center_f":       ob_result.get("center_f", 0),
-                "step":           ob_result.get("step", 0),
-                "verdict":        ob_result.get("verdict", "EMPTY"),
-                "verdict_desc":   ob_result.get("verdict_desc", ""),
-                "insight":        ob_result.get("insight", ""),
-                "total_bid_usdt": ob_result.get("total_bid_usdt", 0),
-                "total_ask_usdt": ob_result.get("total_ask_usdt", 0),
-                "total_bid_fmt":  ob_result.get("total_bid_fmt", "0"),
-                "total_ask_fmt":  ob_result.get("total_ask_fmt", "0"),
-                "extreme_count":  ob_result.get("extreme_count", 0),
-                "heavy_count":    ob_result.get("heavy_count", 0),
-                "book_age_sec":   ob_result.get("book_age_sec", 0),
-                "total_bids":     ob_result.get("total_bids", 0),
-                "total_asks":     ob_result.get("total_asks", 0),
-                "zone_note":      ob_result.get("zone_note", ""),
-                "source":         f"live_ws · {ob_result.get('total_bids',0)} bids / {ob_result.get('total_asks',0)} asks · {ob_result.get('book_age_sec',0)}s old",
-            })
+    def _zl_zone_pos(p: float) -> str:
+        if p > zone_top:    return "above"
+        if p < zone_bottom: return "below"
+        return "inside"
 
-    # ── Fallback: REST depth endpoint ──
-    # Note: limited to ~$10 range from current price for most pairs
+    def _zl_verdict(zone_in: list) -> tuple:
+        ext = sum(1 for lv in zone_in if lv.get("strength_pct", 0) >= 75)
+        hvy = sum(1 for lv in zone_in if 45 <= lv.get("strength_pct", 0) < 75)
+        strong = ext + hvy
+        if ext >= 2 or (ext >= 1 and hvy >= 2):
+            return "INSTITUTIONAL", "Extreme institutional liquidity inside zone", ext, hvy
+        if strong >= 3:
+            return "STRONG", "Multiple heavy walls inside zone", ext, hvy
+        if strong >= 1:
+            return "MODERATE", "Some liquidity present inside zone", ext, hvy
+        if len(zone_in) >= 2:
+            return "WEAK", "Thin orders inside zone", ext, hvy
+        return "EMPTY", "Very little liquidity inside zone", ext, hvy
+
+    # ── Primary path: multi-exchange aggregated OB ──
+    # _lm_build_ob_wall_map("aggregated") aggregates Binance WS + Bybit REST + OKX REST,
+    # clusters near-price levels, and annotates with strength_pct / stability / meaning.
+    try:
+        wall_map = _lm_build_ob_wall_map(symbol, "aggregated")
+    except Exception:
+        wall_map = {"ok": False}
+
+    if wall_map.get("ok"):
+        current_price  = wall_map.get("current_price", 0)
+        sources_used   = wall_map.get("sources_used", [])
+        sources_skip   = wall_map.get("sources_skipped", [])
+
+        bids = [{**lv, "zone_pos": _zl_zone_pos(lv["price"])} for lv in wall_map.get("bids", [])]
+        asks = [{**lv, "zone_pos": _zl_zone_pos(lv["price"])} for lv in wall_map.get("asks", [])]
+
+        zone_side = bids if ob_type == "bullish" else asks
+        zone_in   = [lv for lv in zone_side if lv["zone_pos"] == "inside"]
+        verdict, verdict_desc, ext_cnt, hvy_cnt = _zl_verdict(zone_in)
+
+        total_bid = sum(lv["size_usd"] for lv in bids)
+        total_ask = sum(lv["size_usd"] for lv in asks)
+        zb_usdt   = sum(lv["size_usd"] for lv in bids if lv["zone_pos"] == "inside")
+        za_usdt   = sum(lv["size_usd"] for lv in asks if lv["zone_pos"] == "inside")
+        rel_bid   = sum(lv["size_usd"] for lv in bids if lv["zone_pos"] == "below")
+        rel_ask   = sum(lv["size_usd"] for lv in asks if lv["zone_pos"] == "above")
+
+        parts = []
+        if zb_usdt: parts.append(f"Zone bids: {fmt_vol(zb_usdt)}")
+        if za_usdt: parts.append(f"Zone asks: {fmt_vol(za_usdt)}")
+        if rel_bid: parts.append(f"Support below: {fmt_vol(rel_bid)}")
+        if rel_ask: parts.append(f"Resistance above: {fmt_vol(rel_ask)}")
+        insight = " · ".join(parts) if parts else "No significant zone liquidity detected"
+
+        src_str  = " + ".join(sources_used) if sources_used else "none"
+        skip_str = (", skipped: " + " + ".join(sources_skip)) if sources_skip else ""
+
+        return jsonify({
+            "symbol":          symbol,
+            "ob_type":         ob_type,
+            "zone_top":        round(zone_top, 8),
+            "zone_bottom":     round(zone_bottom, 8),
+            "current_price":   round(current_price, 6),
+            "bids":            bids,
+            "asks":            asks,
+            "verdict":         verdict,
+            "verdict_desc":    verdict_desc,
+            "insight":         insight,
+            "total_bid_fmt":   fmt_vol(total_bid),
+            "total_ask_fmt":   fmt_vol(total_ask),
+            "zone_bid_fmt":    fmt_vol(zb_usdt),
+            "zone_ask_fmt":    fmt_vol(za_usdt),
+            "extreme_count":   ext_cnt,
+            "heavy_count":     hvy_cnt,
+            "sources_used":    sources_used,
+            "sources_skipped": sources_skip,
+            "source":          f"aggregated: {src_str}{skip_str}",
+        })
+
+    # ── Fallback: Binance REST depth snapshot ──
     try:
         r = req.get(
             f"{BINANCE_FUTURES_API}/fapi/v1/depth",
-            params={"symbol": symbol, "limit": 1000},
+            params={"symbol": symbol, "limit": 500},
             timeout=6,
         )
         if r.status_code != 200:
-            return jsonify({"error": "binance error"}), 502
+            return jsonify({"error": "binance depth unavailable"}), 502
 
-        book = r.json()
-        side_key   = "bids" if ob_type == "bullish" else "asks"
-        all_levels = book.get(side_key, [])
+        book     = r.json()
+        raw_bids = {float(p): float(q) for p, q in book.get("bids", []) if float(q) > 0}
+        raw_asks = {float(p): float(q) for p, q in book.get("asks", []) if float(q) > 0}
 
-        parsed = []
-        for row in all_levels:
-            try:
-                parsed.append((float(row[0]), float(row[1])))
-            except Exception:
-                continue
+        if not raw_bids and not raw_asks:
+            return jsonify({"error": "no order book data"}), 200
 
-        if not parsed:
-            return jsonify({"error": "no order book data — add pair to watchlist for full depth"}), 200
+        best_bid = max(raw_bids) if raw_bids else 0.0
+        best_ask = min(raw_asks) if raw_asks else 0.0
+        cp       = (best_bid + best_ask) / 2.0 if best_bid and best_ask else (zone_top + zone_bottom) / 2.0
 
-        all_qtys = [q for _, q in parsed]
-        avg_qty  = sum(all_qtys) / max(len(all_qtys), 1)
+        def _zl_rest_levels(levels_dict: dict, is_bid: bool) -> list:
+            out = []
+            for p, q in levels_dict.items():
+                dist = round(abs(p - cp) / max(cp, 1e-10) * 100, 3)
+                if dist > 10.0: continue
+                if is_bid and p >= cp: continue
+                if not is_bid and p <= cp: continue
+                u = p * q
+                if u < 1000: continue
+                out.append({"price": float(p), "distance_pct": dist,
+                             "size_usd": round(u), "zone_pos": _zl_zone_pos(float(p))})
+            out.sort(key=lambda x: -x["price"] if is_bid else x["price"])
+            return out
 
-        zone_size   = abs(zone_top - zone_bottom)
-        zone_buffer = zone_size * 0.5
-        zone_levels = [(p, q) for p, q in parsed
-                       if (zone_bottom - zone_buffer) <= p <= (zone_top + zone_buffer)]
-        zone_note = "in_zone"
-        if not zone_levels:
-            zone_mid    = (zone_top + zone_bottom) / 2
-            zone_levels = sorted(parsed, key=lambda x: abs(x[0] - zone_mid))[:15]
-            zone_note   = "nearest_to_zone"
+        def _zl_annotate(levels: list, side_lbl: str) -> list:
+            if not levels: return []
+            usds  = [lv["size_usd"] for lv in levels]
+            max_u = max(usds) or 1
+            mdn_u = sorted(usds)[len(usds) // 2] or 1
+            result = []
+            for lv in levels:
+                u    = lv["size_usd"]
+                spct = round(u / max_u * 100) if max_u else 0
+                stab = ("5/5 stable" if u >= mdn_u * 3 else "4/5 stable" if u >= mdn_u * 2
+                        else "3/5 stable" if u >= mdn_u else "2/5 stable" if u >= mdn_u * 0.5
+                        else "1/5 stable")
+                d = lv["distance_pct"]
+                mn  = (f"Very close; {side_lbl} may be tested immediately." if d < 0.3
+                       else f"Near price; short-term {side_lbl} level." if d < 1.0
+                       else f"Mid-range {side_lbl}; relevant for swing moves." if d < 3.0
+                       else f"Far {side_lbl}; significant only on large moves.")
+                result.append({**lv, "size_label": fmt_vol(float(u)),
+                                "strength_pct": spct, "stability": stab, "meaning": mn})
+            return result
 
-        def _classify_wall_r(qty):
-            r2 = qty / max(avg_qty, 1e-10)
-            if r2 >= 3.0: return "EXTREME", "🔴"
-            if r2 >= 2.0: return "HEAVY",   "🟠"
-            if r2 >= 1.5: return "MODERATE","🟡"
-            return "WEAK", "⚪"
+        bids = _zl_annotate(_zl_rest_levels(raw_bids, True),  "support")
+        asks = _zl_annotate(_zl_rest_levels(raw_asks, False), "resistance")
 
-        levels_out = []; total_zone_qty = 0.0
-        extreme_count = heavy_count = moderate_count = 0
-        for p, q in sorted(zone_levels, reverse=(ob_type == "bearish")):
-            cls, icon = _classify_wall_r(q)
-            usdt_val  = q * p
-            levels_out.append({"price": round(p,8), "qty": round(q,4), "qtyFmt": fmt_vol(q),
-                "usdt": round(usdt_val,2), "usdtFmt": fmt_vol(usdt_val), "class": cls, "icon": icon,
-                "ratio": round(q/max(avg_qty,1e-10),2)})
-            total_zone_qty += usdt_val
-            if cls=="EXTREME": extreme_count+=1
-            elif cls=="HEAVY": heavy_count+=1
-            elif cls=="MODERATE": moderate_count+=1
+        zone_side = bids if ob_type == "bullish" else asks
+        zone_in   = [lv for lv in zone_side if lv["zone_pos"] == "inside"]
+        verdict, verdict_desc, ext_cnt, hvy_cnt = _zl_verdict(zone_in)
+        verdict_desc += " (Binance snapshot only)"
 
-        strong = extreme_count + heavy_count
-        zl     = "in zone" if zone_note=="in_zone" else "nearest to zone"
-        if extreme_count>=2 or (extreme_count>=1 and heavy_count>=2):
-            verdict="INSTITUTIONAL"; verdict_desc=f"Extreme institutional liquidity ({zl})"
-        elif strong>=3:
-            verdict="STRONG"; verdict_desc=f"Multiple heavy walls ({zl})"
-        elif strong>=1:
-            verdict="MODERATE"; verdict_desc=f"Some liquidity present ({zl})"
-        elif moderate_count>=2:
-            verdict="WEAK"; verdict_desc=f"Mostly normal orders ({zl})"
-        else:
-            verdict="EMPTY"; verdict_desc=f"Very little liquidity ({zl}) — add pair to watchlist for full depth"
+        total_bid = sum(lv["size_usd"] for lv in bids)
+        total_ask = sum(lv["size_usd"] for lv in asks)
+        zb_usdt   = sum(lv["size_usd"] for lv in bids if lv["zone_pos"] == "inside")
+        za_usdt   = sum(lv["size_usd"] for lv in asks if lv["zone_pos"] == "inside")
 
-        return jsonify({"symbol": symbol, "ob_type": ob_type,
-            "zone_top": round(zone_top,8), "zone_bottom": round(zone_bottom,8),
-            "side": "bids" if ob_type=="bullish" else "asks",
-            "levels": levels_out, "total_usdt": round(total_zone_qty,2),
-            "total_fmt": fmt_vol(total_zone_qty), "extreme_count": extreme_count,
-            "heavy_count": heavy_count, "moderate_count": moderate_count,
-            "avg_book_qty": round(avg_qty,4), "verdict": verdict,
-            "verdict_desc": verdict_desc, "verdict_color": verdict.lower(),
-            "zone_note": zone_note,
-            "source": "rest_snapshot (limited range — add to watchlist for full depth)"})
+        return jsonify({
+            "symbol":          symbol,
+            "ob_type":         ob_type,
+            "zone_top":        round(zone_top, 8),
+            "zone_bottom":     round(zone_bottom, 8),
+            "current_price":   round(cp, 6),
+            "bids":            bids,
+            "asks":            asks,
+            "verdict":         verdict,
+            "verdict_desc":    verdict_desc,
+            "insight":         "",
+            "total_bid_fmt":   fmt_vol(total_bid),
+            "total_ask_fmt":   fmt_vol(total_ask),
+            "zone_bid_fmt":    fmt_vol(zb_usdt),
+            "zone_ask_fmt":    fmt_vol(za_usdt),
+            "extreme_count":   ext_cnt,
+            "heavy_count":     hvy_cnt,
+            "sources_used":    ["binance_rest"],
+            "sources_skipped": ["bybit", "okx"],
+            "source":          "binance_rest_snapshot (limited depth — add to watchlist for multi-exchange)",
+        })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -39953,9 +41559,6 @@ def _bt_run_ob_historical_backtest(params: dict) -> dict:
 @app.route("/api/backtest/ob-historical", methods=["POST"])
 @login_required
 def api_backtest_ob_historical():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True) or {}
     params, parse_error = _bt_parse_ob_historical_payload(payload)
@@ -39973,9 +41576,6 @@ def api_backtest_ob_historical():
 @app.route("/api/backtest/ob-historical/debug", methods=["GET"])
 @login_required
 def api_backtest_ob_historical_debug():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     # ── Build params from query string ────────────────────────────────────────
     raw_rr = request.args.get("rr_values", "1,2,3")
@@ -40499,9 +42099,6 @@ def api_backtest_ob_historical_debug():
 @app.route("/api/backtest/ob-historical/threshold-stability", methods=["POST"])
 @login_required
 def api_backtest_ob_historical_threshold_stability():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     import time as _t14
     payload = request.get_json(force=True) or {}
@@ -42258,9 +43855,6 @@ def _bt_run_walk_forward(
 @app.route("/api/backtest/ob-historical/threshold-walk-forward", methods=["POST"])
 @login_required
 def api_backtest_ob_historical_threshold_walk_forward():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     import time as _t_wf_ep
     payload = request.get_json(force=True) or {}
@@ -43395,9 +44989,6 @@ _TE_FORBIDDEN_REQUEST_KEYS = (
 @app.route("/api/backtest/ob-historical/trade-explorer", methods=["POST"])
 @login_required
 def api_backtest_ob_historical_trade_explorer():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True) or {}
 
@@ -43515,9 +45106,6 @@ def api_backtest_ob_historical_trade_explorer():
            methods=["POST"])
 @login_required
 def api_backtest_ob_historical_trade_explorer_detail(touch_trade_id: str):
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True) or {}
     for banned in _TE_FORBIDDEN_REQUEST_KEYS:
@@ -45422,9 +47010,6 @@ _AP_FORBIDDEN_REQUEST_KEYS = (
 @app.route("/api/backtest/ob-historical/autopsy", methods=["POST"])
 @login_required
 def api_backtest_ob_historical_autopsy():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True, silent=True) or {}
     if not isinstance(payload, dict):
@@ -45879,9 +47464,6 @@ _PWF_FORBIDDEN_KEYS = (
 @app.route("/api/backtest/ob-historical/profile-walk-forward", methods=["POST"])
 @login_required
 def api_backtest_ob_historical_profile_walk_forward():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True, silent=True) or {}
     if not isinstance(payload, dict):
@@ -46204,9 +47786,6 @@ def _bt_run_ob_mtf_backtest(params: dict) -> dict:
 @app.route("/api/backtest/ob-mtf", methods=["POST"])
 @login_required
 def api_backtest_ob_mtf():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True) or {}
 
@@ -46272,9 +47851,6 @@ def api_backtest_ob_mtf():
 @app.route("/api/backtest/ob-mtf/debug", methods=["GET"])
 @login_required
 def api_backtest_ob_mtf_debug():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     symbol = _bt_clean_symbol(request.args.get("symbol", "BTCUSDT"))
     raw_tfs = request.args.get("timeframes", "15m,1h,4h")
@@ -46635,9 +48211,6 @@ def _bt_run_ob_batch_backtest(params: dict) -> dict:
 @app.route("/api/backtest/ob-batch", methods=["POST"])
 @login_required
 def api_backtest_ob_batch():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True) or {}
 
@@ -46717,9 +48290,6 @@ def api_backtest_ob_batch():
 @app.route("/api/backtest/ob-batch/debug", methods=["GET"])
 @login_required
 def api_backtest_ob_batch_debug():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     raw_syms = request.args.get("symbols", "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT")
     symbols = []
