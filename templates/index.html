@@ -1490,6 +1490,9 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         <label style="display:flex;align-items:center;gap:7px;margin-top:8px;font-size:11px;color:var(--text-secondary);cursor:pointer">
           <input id="movExcludeStable" type="checkbox" checked style="width:auto"> Exclude stablecoins &amp; leveraged tokens
         </label>
+        <label style="display:flex;align-items:center;gap:7px;margin-top:6px;font-size:11px;color:var(--text-secondary);cursor:pointer">
+          <input id="movExcludeStocks" type="checkbox" checked style="width:auto"> Exclude stock pairs
+        </label>
         <button class="btn-primary" onclick="loadMovers()" style="margin-top:10px;width:100%;padding:9px;font-size:12px">⚡ Load Movers → Selected Pairs</button>
         <div id="moversMsg" style="font-size:11px;color:var(--text-secondary);margin-top:6px;min-height:14px"></div>
       </div>
@@ -2584,6 +2587,8 @@ function _isJunkPair(sym){
       || /\d+(L|S)USDT$/.test(sym)
       || /^(USDC|BUSD|TUSD|DAI|FDUSD|USDD|USDP|GUSD|EUR|AEUR)/.test(sym);
 }
+// Tokenized-stock pairs (MEXC/Upbit list many, e.g. AAPLSTOCKUSDT, BRKBSTOCKUSDT)
+function _isStockPair(sym){ return /STOCK/.test(String(sym||'')); }
 async function loadMovers(){
   var msgEl = $('moversMsg');
   var setMsg = function(t,c){ if(msgEl){ msgEl.style.color = c || 'var(--text-secondary)'; msgEl.textContent = t; } };
@@ -2594,6 +2599,7 @@ async function loadMovers(){
     if(!Array.isArray(data) || !data.length){ setMsg('No pairs returned for this exchange', '#f87171'); return; }
     allPairs = data;
     var excl   = $('movExcludeStable') ? $('movExcludeStable').checked : true;
+    var exclSt = $('movExcludeStocks') ? $('movExcludeStocks').checked : true;
     var minVol = $('movMinVol')  ? (parseFloat($('movMinVol').value) || 0) : 0;
     var nGain  = $('movGainers') ? Math.max(0, parseInt($('movGainers').value, 10) || 0) : 100;
     var nLose  = $('movLosers')  ? Math.max(0, parseInt($('movLosers').value, 10) || 0) : 100;
@@ -2601,6 +2607,7 @@ async function loadMovers(){
       if(typeof p.changePct !== 'number') return false;
       if(minVol && (p.quoteVolume || 0) < minVol) return false;
       if(excl && _isJunkPair(p.symbol)) return false;
+      if(exclSt && _isStockPair(p.symbol)) return false;
       return true;
     });
     var byChg = pool.slice().sort(function(a,b){ return b.changePct - a.changePct; });
