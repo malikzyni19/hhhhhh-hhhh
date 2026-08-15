@@ -89,8 +89,22 @@ check("2-2 it scans the whole market, not a hand-picked list",
       body["scanMode"] == "market", body)
 check("2-3 round robin on, so each run continues where the last stopped",
       body["roundRobin"] is True)
-check("2-4 batch size comes from config", body["pairsPerCycle"] == 7,
-      body["pairsPerCycle"])
+# Pace now comes from the settings page, with the environment as fallback —
+# so an enabled user's saved value wins over ZYNI_SIG_SCAN_PAIRS.
+check("2-4 batch size comes from the enabled user's settings",
+      body["pairsPerCycle"] == 30, body["pairsPerCycle"])
+
+with main.app.app_context():
+    _st = get_or_create_signal_settings(ADMIN_ID)
+    _st.scan_pairs_per_cycle = 55
+    db.session.commit()
+    _u2, _b2 = _payload_for("scan")
+check("2-4b changing the setting changes what the scan asks for",
+      _b2["pairsPerCycle"] == 55, _b2["pairsPerCycle"])
+with main.app.app_context():
+    _st = get_or_create_signal_settings(ADMIN_ID)
+    _st.scan_pairs_per_cycle = 30
+    db.session.commit()
 
 for kind in SCAN_SEQUENCE:
     u, b = _payload_for(kind)

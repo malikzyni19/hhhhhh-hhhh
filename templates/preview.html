@@ -7118,6 +7118,23 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
                     '<div style="font-size:9px;color:var(--text-3);line-height:1.5;margin-top:3px">Select none to accept every timeframe.</div>'+
                   '</div>'+
 
+                  /* ── Scanner pace ── */
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">Scanner speed</div>'+
+                    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px 12px">'+
+                      '<div>'+
+                        '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Scan every (minutes)</label>'+
+                        '<input id="lmSigScanInterval" type="number" min="2" max="60" step="1" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                        '<div style="font-size:9px;color:var(--text-3);line-height:1.5;margin-top:3px">How often the server scans. Shorter finds setups sooner but uses more database traffic.</div>'+
+                      '</div>'+
+                      '<div>'+
+                        '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Coins per scan</label>'+
+                        '<input id="lmSigScanPairs" type="number" min="5" max="120" step="5" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                        '<div style="font-size:9px;color:var(--text-3);line-height:1.5;margin-top:3px">How many coins each scan covers. The scan continues where the last one stopped, so the whole market is covered over time.</div>'+
+                      '</div>'+
+                    '</div>'+
+                  '</div>'+
+
                   /* ── Engine status + manual controls ── */
                   '<div class="lm-ws-section">'+
                     '<div class="lm-ws-sh">Engine</div>'+
@@ -11300,6 +11317,9 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
       if($('lmSigCooldown'))     $('lmSigCooldown').value      = s.per_pair_cooldown_min;
       if($('lmSigApproachPct'))  $('lmSigApproachPct').value   = s.approach_pct;
       if($('lmSigScopeLimit'))   $('lmSigScopeLimit').value    = s.coin_scope_limit;
+      if($('lmSigScanInterval'))
+        $('lmSigScanInterval').value = Math.round((s.scan_interval_sec||900)/60);
+      if($('lmSigScanPairs'))    $('lmSigScanPairs').value     = s.scan_pairs_per_cycle;
       if($('lmSigLong'))         $('lmSigLong').checked  = !!s.allow_long;
       if($('lmSigShort'))        $('lmSigShort').checked = !!s.allow_short;
       if($('lmSigSymbols'))      $('lmSigSymbols').value = (s.symbols||[]).join(' ');
@@ -11359,6 +11379,10 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
         per_pair_cooldown_min: Number(_num('lmSigCooldown')),
         approach_pct:          Number(_num('lmSigApproachPct')),
         coin_scope_limit:      Number(_num('lmSigScopeLimit')),
+        /* Shown in minutes because that is how people think about it; the
+           server stores seconds. */
+        scan_interval_sec:     Math.round(Number(_num('lmSigScanInterval') || 15) * 60),
+        scan_pairs_per_cycle:  Number(_num('lmSigScanPairs')),
         allow_long:            _on('lmSigLong'),
         allow_short:           _on('lmSigShort'),
         symbols:               syms,
@@ -11465,7 +11489,13 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
             '<div>Setups found and stored: <b>'+esc(s.candidates_stored===null||s.candidates_stored===undefined?'—':s.candidates_stored)+'</b></div>'+
             '<div>Last scan: '+esc(last.kind||'—')+' at '+esc(when)+
               (last.ok===false ? ' <span style="color:#f87171">(failed)</span>' : '')+'</div>'+
-            '<div>Runs every '+esc(s.cycle_sec||'?')+'s · '+esc(s.pairs||'?')+' pairs per scan</div>';
+            '<div>Runs every '+esc(Math.round((s.cycle_sec||0)/60))+' min · '+
+              esc(s.pairs||'?')+' coins per scan</div>'+
+            /* Without this, changing the speed while the engine is off looks
+               like the setting was ignored — it just is not in use yet. */
+            (s.pace_source==='settings'
+              ? '<div style="color:var(--text-3)">Using your saved speed settings.</div>'
+              : '<div style="color:var(--yellow,#facc15)">Using default speed — turn the signal engine on to apply your settings.</div>');
         })
         .catch(function(e){ _msg(el, 'Could not read status: '+e, 'err'); });
     };

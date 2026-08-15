@@ -46,6 +46,10 @@ _BOUNDS = {
     "min_confidence":        (0, 100),
     "approach_pct":          (0.1, 10.0),
     "coin_scope_limit":      (10, 500),
+    # Scanner pace. The floor on the interval protects the exchange rate
+    # limit; the ceiling on pairs protects database transfer.
+    "scan_interval_sec":     (120, 3600),
+    "scan_pairs_per_cycle":  (5, 120),
 }
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
@@ -68,6 +72,8 @@ DEFAULTS: dict = {
     "allow_short":           True,
     "timeframes":            [],       # empty = all timeframes
     "delivery_enabled":      False,
+    "scan_interval_sec":     900,
+    "scan_pairs_per_cycle":  30,
 }
 
 
@@ -120,6 +126,8 @@ def get_or_create_signal_settings(user_id: int):
         allow_short           = DEFAULTS["allow_short"],
         timeframes_json       = json.dumps(DEFAULTS["timeframes"]),
         delivery_enabled      = DEFAULTS["delivery_enabled"],
+        scan_interval_sec     = DEFAULTS["scan_interval_sec"],
+        scan_pairs_per_cycle  = DEFAULTS["scan_pairs_per_cycle"],
     )
     try:
         db.session.add(row)
@@ -158,6 +166,8 @@ def serialize_signal_settings(row, include_secrets: bool = False) -> dict:
         "allow_short":           bool(row.allow_short),
         "timeframes":            _json_list(row.timeframes_json, []),
         "delivery_enabled":      bool(row.delivery_enabled),
+        "scan_interval_sec":     getattr(row, "scan_interval_sec", 900) or 900,
+        "scan_pairs_per_cycle":  getattr(row, "scan_pairs_per_cycle", 30) or 30,
 
         "telegram_configured":   bool(token and row.telegram_chat_id),
         "telegram_token_hint":   (f"…{token[-4:]}" if len(token) >= 4 else None),
@@ -219,7 +229,8 @@ def apply_signal_settings_update(row, payload: dict) -> tuple:
 
     # ── Numeric, clamped ─────────────────────────────────────────────────────
     for key in ("min_confluence", "max_signals_per_day", "per_pair_cooldown_min",
-                "min_confidence", "approach_pct", "coin_scope_limit"):
+                "min_confidence", "approach_pct", "coin_scope_limit",
+                "scan_interval_sec", "scan_pairs_per_cycle"):
         if key in payload:
             _set(key, _clamp(key, payload[key], getattr(row, key)))
 

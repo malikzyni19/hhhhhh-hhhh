@@ -1542,6 +1542,15 @@ class LiveMonitorSignalSettings(db.Model):
     delivery_enabled = db.Column(db.Boolean, nullable=False, default=False,
                                  server_default="false")
 
+    # ── Scanner pace ─────────────────────────────────────────────────────────
+    # How hard the background scanner works. These were environment-only,
+    # which meant the two numbers that most affect cost and responsiveness
+    # could not be changed without a redeploy.
+    scan_interval_sec = db.Column(db.Integer, nullable=False, default=900,
+                                  server_default="900")
+    scan_pairs_per_cycle = db.Column(db.Integer, nullable=False, default=30,
+                                     server_default="30")
+
     created_at = db.Column(db.DateTime,
                            default=lambda: datetime.now(timezone.utc),
                            nullable=False)

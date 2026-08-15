@@ -41,19 +41,60 @@ def scanner_enabled() -> bool:
         in ("1", "true", "yes", "on")
 
 
-def cycle_seconds() -> int:
+def _env_cycle_seconds() -> int:
     try:
         return max(120, min(3600, int(os.environ.get("ZYNI_SIG_SCAN_CYCLE_SEC", "900"))))
     except (TypeError, ValueError):
         return 900
 
 
-def pairs_per_cycle() -> int:
-    """Pairs swept per scan. The main lever on exchange API weight."""
+def _env_pairs_per_cycle() -> int:
     try:
         return max(5, min(120, int(os.environ.get("ZYNI_SIG_SCAN_PAIRS", "30"))))
     except (TypeError, ValueError):
         return 30
+
+
+def _scanner_pace() -> dict:
+    """How fast to scan and how much per scan.
+
+    These come from the settings page of the account the scanner runs as, so
+    the two numbers that most affect cost and responsiveness can be changed
+    without a redeploy. The environment values remain the fallback for a
+    server with nobody opted in yet.
+    """
+    pace = {"interval": _env_cycle_seconds(), "pairs": _env_pairs_per_cycle(),
+            "source": "environment"}
+    try:
+        from models import LiveMonitorSignalSettings as _S
+        from sqlalchemy.orm import load_only as _load_only
+        with _m.app.app_context():
+            row = (_S.query
+                   .options(_load_only(_S.user_id, _S.enabled,
+                                       _S.scan_interval_sec,
+                                       _S.scan_pairs_per_cycle))
+                   .filter(_S.enabled.is_(True))
+                   .order_by(_S.user_id.asc()).first())
+            if row is not None:
+                iv = getattr(row, "scan_interval_sec", None)
+                pp = getattr(row, "scan_pairs_per_cycle", None)
+                if iv:
+                    pace["interval"] = max(120, min(3600, int(iv)))
+                if pp:
+                    pace["pairs"] = max(5, min(120, int(pp)))
+                pace["source"] = "settings"
+    except Exception as exc:
+        print(f"[SIG-8] pace lookup failed, using environment: {str(exc)[:100]}")
+    return pace
+
+
+def cycle_seconds() -> int:
+    return _scanner_pace()["interval"]
+
+
+def pairs_per_cycle() -> int:
+    """Pairs swept per scan. The main lever on exchange API weight."""
+    return _scanner_pace()["pairs"]
 
 
 def scan_exchange() -> str:
@@ -268,15 +309,16 @@ def run_all_scans_once() -> dict:
 
 
 def scanner_state() -> dict:
+    pace = _scanner_pace()
     with _state_lock:
         return dict(_state, sequence=list(SCAN_SEQUENCE),
-                    cycle_sec=cycle_seconds(), pairs=pairs_per_cycle())
+                    cycle_sec=pace["interval"], pairs=pace["pairs"],
+                    pace_source=pace["source"])
 
 
 def scanner_loop():
     """Background loop. Sleeps first so startup is not a thundering herd."""
-    cycle = cycle_seconds()
-    print(f"[SIG-8] background scanner started cycle={cycle}s "
+    print(f"[SIG-8] background scanner started cycle={cycle_seconds()}s "
           f"pairs={pairs_per_cycle()} sequence={'>'.join(SCAN_SEQUENCE)}")
 
     with _state_lock:
@@ -304,4 +346,7 @@ def scanner_loop():
                 _state["last_error"] = str(exc)[:200]
             print(f"[SIG-8] scan cycle error: {exc}")
 
+        # Re-read each cycle so a settings change takes effect on the next
+        # pass rather than requiring a restart.
+        cycle = cycle_seconds()
         time.sleep(max(30.0, cycle - (time.time() - started)))

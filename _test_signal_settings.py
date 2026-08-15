@@ -417,6 +417,67 @@ check("7-8 the live-price feed list is still capped at 10",
       len(_mm7.load_user_watchlist("siguser")))
 
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 8 — scanner pace is selectable, not baked into the deploy")
+# ══════════════════════════════════════════════════════════════════════════════
+# How often the server scans and how many coins each scan covers are the two
+# numbers that most affect cost and responsiveness. They were environment-only,
+# so changing either meant a redeploy.
+
+st = client.get("/api/live-monitor/signal-settings").get_json()["settings"]
+check("8-1 scan interval is exposed", st.get("scan_interval_sec") == 900,
+      st.get("scan_interval_sec"))
+check("8-2 coins per scan is exposed", st.get("scan_pairs_per_cycle") == 30,
+      st.get("scan_pairs_per_cycle"))
+
+r = client.post("/api/live-monitor/signal-settings",
+                json={"scan_interval_sec": 300, "scan_pairs_per_cycle": 60})
+check("8-3 both can be changed", r.status_code == 200, r.get_json())
+st = r.get_json()["settings"]
+check("8-4 the new interval sticks", st["scan_interval_sec"] == 300, st["scan_interval_sec"])
+check("8-5 the new coin count sticks", st["scan_pairs_per_cycle"] == 60,
+      st["scan_pairs_per_cycle"])
+
+# Guards, so a mistyped value cannot hammer the exchange or the database.
+r = client.post("/api/live-monitor/signal-settings", json={"scan_interval_sec": 5})
+check("8-6 an absurdly short interval is clamped, not accepted",
+      r.get_json()["settings"]["scan_interval_sec"] == 120,
+      r.get_json()["settings"]["scan_interval_sec"])
+r = client.post("/api/live-monitor/signal-settings", json={"scan_pairs_per_cycle": 9999})
+check("8-7 an absurd coin count is clamped",
+      r.get_json()["settings"]["scan_pairs_per_cycle"] == 120,
+      r.get_json()["settings"]["scan_pairs_per_cycle"])
+r = client.post("/api/live-monitor/signal-settings",
+                json={"scan_interval_sec": "nonsense"})
+check("8-8 junk input keeps the previous value rather than breaking",
+      r.status_code == 200, r.get_json())
+
+# The scanner must actually obey the setting, otherwise the control is a lie.
+from live_monitor.signal_scanner import _scanner_pace                 # noqa: E402
+from live_monitor.signal_settings import get_or_create_signal_settings  # noqa: E402
+
+client.post("/api/live-monitor/signal-settings",
+            json={"enabled": True, "scan_interval_sec": 600,
+                  "scan_pairs_per_cycle": 45})
+with main.app.app_context():
+    pace = _scanner_pace()
+check("8-9 the scanner reads the interval from settings",
+      pace["interval"] == 600, pace)
+check("8-10 the scanner reads the coin count from settings",
+      pace["pairs"] == 45, pace)
+check("8-11 the source is reported as settings", pace["source"] == "settings", pace)
+
+# With nobody opted in, the environment default is the honest fallback.
+client.post("/api/live-monitor/signal-settings", json={"enabled": False})
+with main.app.app_context():
+    _s2 = get_or_create_signal_settings(UID2)
+    _s2.enabled = False
+    db.session.commit()
+    pace = _scanner_pace()
+check("8-12 falls back to the environment when no user is opted in",
+      pace["source"] == "environment", pace)
+
 print(f"\n{'='*60}")
 print(f"  TOTAL: {_pass+_fail}   PASS: {_pass}   FAIL: {_fail}")
 print(f"{'='*60}")

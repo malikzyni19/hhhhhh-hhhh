@@ -790,6 +790,20 @@ def _auto_migrate():
                 print("[MIGRATE] Phase 11.11 execution_mode/policy_mode columns ensured on user_preferences")
                 # Phase 11.12: Paper Auto Gate — table created by db.create_all() above
                 print("[MIGRATE] Phase 11.12 live_monitor_paper_auto_gate_events table ensured via create_all")
+                # Phase SIG: scanner pace became per-user settings rather than
+                # environment-only, so existing rows need the new columns.
+                for _stmt_sig in [
+                    "ALTER TABLE live_monitor_signal_settings ADD COLUMN IF NOT EXISTS "
+                    "scan_interval_sec INTEGER NOT NULL DEFAULT 900",
+                    "ALTER TABLE live_monitor_signal_settings ADD COLUMN IF NOT EXISTS "
+                    "scan_pairs_per_cycle INTEGER NOT NULL DEFAULT 30",
+                ]:
+                    try:
+                        conn.execute(text(_stmt_sig))
+                    except Exception:
+                        pass
+                conn.commit()
+                print("[MIGRATE] signal scanner pace columns ensured")
                 # Phase 11.13: Paper Risk Guard — add column to user_preferences
                 for _stmt_1113 in [
                     "ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS "
@@ -31483,6 +31497,8 @@ _LM_SIGNAL_DEFAULTS_PUBLIC = {
     "approach_pct":          1.5,
     "coin_scope":            "top_volume",
     "coin_scope_limit":      100,
+    "scan_interval_sec":     900,
+    "scan_pairs_per_cycle":  30,
 }
 
 
