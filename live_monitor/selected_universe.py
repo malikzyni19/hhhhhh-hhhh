@@ -124,9 +124,35 @@ def build_universe(exchange: str = "binance", market: str = "perpetual",
     return picked
 
 
+def user_universe_config(username: str) -> dict:
+    """This user's own Selected Pairs settings, falling back to defaults.
+
+    Someone who chose 200 gainers and no losers must get exactly that list
+    rebuilt — using a server default of 100/100 would quietly hand them a
+    different universe than the one their tab shows.
+    """
+    saved = {}
+    try:
+        saved = _m.load_user_universe_config(username) or {}
+    except Exception:
+        saved = {}
+
+    cfg = dict(universe_config())
+    user_cfg = saved.get("cfg") or {}
+    for key in ("direction", "gainers", "losers", "min_volume",
+                "exclude_junk", "exclude_stocks"):
+        if key in user_cfg and user_cfg[key] is not None:
+            cfg[key] = user_cfg[key]
+
+    cfg["source"]   = str(saved.get("source") or "manual")
+    cfg["exchange"] = user_cfg.get("exchange") or None
+    cfg["market"]   = user_cfg.get("market") or None
+    return cfg
+
+
 def refresh_universe_for_user(username: str, exchange: str = "binance",
                               market: str = "perpetual") -> dict:
-    """Rebuild and store one user's universe. Returns a small summary.
+    """Rebuild and store one user's universe, using THEIR settings.
 
     Never raises, and never writes an empty list: if the exchange is briefly
     unreachable, keeping the previous universe is far better than wiping it
@@ -135,8 +161,20 @@ def refresh_universe_for_user(username: str, exchange: str = "binance",
     if not auto_universe_enabled():
         return {"ok": True, "skipped": "auto_universe_disabled"}
 
+    cfg = user_universe_config(username)
+
+    # A hand-picked list is a deliberate choice. Rebuilding it from movers
+    # would silently throw away pairs the user chose on purpose.
+    if cfg.get("source") != "movers":
+        return {"ok": True, "skipped": "hand_picked_list",
+                "count": len(_m.load_user_selected_pairs(username) or [])}
+
+    # The tab's own exchange/market win, since the universe was built there.
+    exchange = cfg.get("exchange") or exchange
+    market   = cfg.get("market") or market
+
     try:
-        symbols = build_universe(exchange, market)
+        symbols = build_universe(exchange, market, cfg)
         if not symbols:
             return {"ok": False, "reason": "no_pairs_returned",
                     "kept_previous": True}
@@ -150,6 +188,9 @@ def refresh_universe_for_user(username: str, exchange: str = "binance",
             "count": len(after),
             "added": len([s for s in after if s not in before]),
             "removed": len([s for s in before if s not in after]),
+            "direction": cfg.get("direction"),
+            "gainers": cfg.get("gainers"),
+            "losers": cfg.get("losers"),
         }
     except Exception as exc:
         print(f"[SIG-9] universe refresh failed for {username}: {str(exc)[:120]}")
@@ -173,22 +214,20 @@ def refresh_universes_for_enabled_users(exchange: str = "binance",
             if not rows:
                 return out
 
-            # One rebuild serves everyone — the mover list is global, so
-            # fetching it per user would just repeat the same work.
-            symbols = build_universe(exchange, market)
-            if not symbols:
-                return {**out, "skipped": "no_pairs_returned"}
-
+            # Each user can have different settings (200 gainers only, a
+            # volume floor, a different exchange), so each is rebuilt with
+            # their own — a shared list would be wrong for most of them.
             for r in rows:
                 user = User.query.filter_by(id=r.user_id).first()
                 if not user:
                     continue
                 try:
-                    _m.save_user_selected_pairs(user.username, symbols)
-                    out["results"][user.username] = len(symbols)
-                    out["users"] += 1
+                    res = refresh_universe_for_user(user.username, exchange, market)
+                    out["results"][user.username] = res
+                    if res.get("ok") and not res.get("skipped"):
+                        out["users"] += 1
                 except Exception as exc:
-                    print(f"[SIG-9] save failed for {user.username}: {str(exc)[:100]}")
+                    print(f"[SIG-9] refresh failed for {user.username}: {str(exc)[:100]}")
     except Exception as exc:
         print(f"[SIG-9] universe refresh sweep failed: {str(exc)[:120]}")
     return out

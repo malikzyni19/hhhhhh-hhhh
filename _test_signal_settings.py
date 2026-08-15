@@ -401,8 +401,13 @@ client7 = main.app.test_client()
 with client7.session_transaction() as s7:
     s7["logged_in"] = True; s7["username"] = "siguser"
 
-r = client7.post("/api/watchlist/register",
-                 json={"pairs": [f"REG{i}USDT" for i in range(25)]})
+# Registering starts real websocket price threads for each pair. Fake symbols
+# make those threads flail against the exchange and occasionally crash the
+# interpreter at shutdown, so the live feed is stubbed — this test is about
+# what gets STORED, not about streaming prices.
+with _patch2.object(_mm7, "_ensure_wl_thread", lambda *a, **k: None):
+    r = client7.post("/api/watchlist/register",
+                     json={"pairs": [f"REG{i}USDT" for i in range(25)]})
 check("7-6 registering pairs succeeds", r.status_code == 200, r.status_code)
 check("7-7 all 25 kept for signal scanning",
       len(_mm7.load_user_selected_pairs("siguser")) == 25,
@@ -415,5 +420,12 @@ check("7-8 the live-price feed list is still capped at 10",
 print(f"\n{'='*60}")
 print(f"  TOTAL: {_pass+_fail}   PASS: {_pass}   FAIL: {_fail}")
 print(f"{'='*60}")
-if _fail:
-    sys.exit(1)
+
+# Registering pairs starts the watchlist price worker, which opens websocket
+# connections for each symbol. Fake test symbols leave those daemon threads
+# doing network I/O that intermittently crashes the interpreter during
+# shutdown — after every assertion has already run. Exiting immediately with
+# the real verdict keeps the result honest and the exit code deterministic.
+sys.stdout.flush()
+sys.stderr.flush()
+os._exit(1 if _fail else 0)

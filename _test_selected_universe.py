@@ -137,6 +137,12 @@ section("GROUP 3 — refreshing a user's stored universe")
 
 with main.app.app_context():
     main.save_user_selected_pairs("uni", ["OLDCOINUSDT"])
+    # Declares this list as movers-built, which is what makes it eligible for
+    # an automatic rebuild at all — a hand-picked list is left alone (GROUP 7).
+    main.save_user_universe_config("uni", {
+        "source": "movers",
+        "cfg": {"dir": "both", "gainers": 3, "losers": 2},
+    })
 
     with patch.object(main, "get_pairs_exchange", return_value=MARKET):
         res = refresh_universe_for_user("uni")
@@ -173,6 +179,10 @@ with main.app.app_context():
     st.enabled = True
     st.coin_scope = "top_volume"
     db.session.commit()
+    main.save_user_universe_config("uni", {
+        "source": "movers",
+        "cfg": {"dir": "both", "gainers": 3, "losers": 2},
+    })
 
 with patch.object(main, "get_pairs_exchange", return_value=MARKET):
     res = refresh_universes_for_enabled_users()
@@ -208,6 +218,10 @@ with main.app.app_context():
     st.coin_scope = "selected_pairs"
     db.session.commit()
     main.save_user_selected_pairs("uni", ["STALEUSDT"])
+    main.save_user_universe_config("uni", {
+        "source": "movers",
+        "cfg": {"dir": "both", "gainers": 3, "losers": 2},
+    })
 
 calls = []
 def _count_refresh(*a, **kw):
@@ -245,8 +259,141 @@ check("5-4 a failed universe refresh does not stop the scan",
       res.get("ok") is True, res)
 
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 6 — the rebuild uses YOUR tab settings, not server defaults")
+# ══════════════════════════════════════════════════════════════════════════════
+# Someone who picked "200 gainers, no losers" must get exactly that rebuilt.
+# A server default of 100 gainers + 100 losers would hand them a different
+# universe than the one their tab shows, with nothing explaining the mismatch.
+
+from live_monitor.selected_universe import user_universe_config    # noqa: E402
+
+BIG = ([pair(f"UP{i}USDT", 50.0 - i) for i in range(10)] +
+       [pair(f"DN{i}USDT", -50.0 + i) for i in range(10)])
+
+with main.app.app_context():
+    main.save_user_universe_config("uni", {
+        "source": "movers",
+        "cfg": {"dir": "gainers", "gainers": 4, "losers": 0,
+                "minVol": 0, "excludeJunk": True, "excludeStocks": True},
+    })
+    cfg = user_universe_config("uni")
+
+check("6-1 the saved direction is used", cfg["direction"] == "gainers", cfg)
+check("6-2 the saved counts are used",
+      cfg["gainers"] == 4 and cfg["losers"] == 0, cfg)
+check("6-3 the list is recognised as movers-built", cfg["source"] == "movers")
+
+with main.app.app_context():
+    with patch.object(main, "get_pairs_exchange", return_value=BIG):
+        res = refresh_universe_for_user("uni")
+    stored = main.load_user_selected_pairs("uni")
+
+check("6-4 exactly the requested number of gainers", len(stored) == 4, stored)
+check("6-5 gainers only — no losers crept in",
+      all(s.startswith("UP") for s in stored), stored)
+check("6-6 the strongest gainer is first", stored[0] == "UP0USDT", stored)
+check("6-7 the settings used are reported back",
+      res.get("direction") == "gainers" and res.get("gainers") == 4, res)
+
+# Losers-only is the mirror case.
+with main.app.app_context():
+    main.save_user_universe_config("uni", {
+        "source": "movers",
+        "cfg": {"dir": "losers", "gainers": 0, "losers": 3},
+    })
+    with patch.object(main, "get_pairs_exchange", return_value=BIG):
+        refresh_universe_for_user("uni")
+    stored = main.load_user_selected_pairs("uni")
+check("6-8 losers-only returns only losers",
+      len(stored) == 3 and all(s.startswith("DN") for s in stored), stored)
+
+# A user's own volume floor must be honoured too.
+with main.app.app_context():
+    main.save_user_universe_config("uni", {
+        "source": "movers",
+        "cfg": {"dir": "gainers", "gainers": 10, "losers": 0,
+                "minVol": 5_000_000},
+    })
+    THIN = [pair("RICHUSDT", 20.0, vol=9_000_000),
+            pair("POORUSDT", 40.0, vol=1_000)]
+    with patch.object(main, "get_pairs_exchange", return_value=THIN):
+        refresh_universe_for_user("uni")
+    stored = main.load_user_selected_pairs("uni")
+check("6-9 the user's own volume floor is applied",
+      stored == ["RICHUSDT"], stored)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 7 — a hand-picked list is never rebuilt")
+# ══════════════════════════════════════════════════════════════════════════════
+# Starring individual coins is a deliberate choice. Replacing those with top
+# movers would throw away exactly the pairs the user cared about most.
+
+with main.app.app_context():
+    main.save_user_selected_pairs("handy", ["MYCOINUSDT", "OTHERUSDT"])
+    main.save_user_universe_config("handy", {"source": "manual"})
+
+    with patch.object(main, "get_pairs_exchange", return_value=BIG):
+        res = refresh_universe_for_user("handy")
+    stored = main.load_user_selected_pairs("handy")
+
+check("7-1 a hand-picked list is skipped, not rebuilt",
+      res.get("skipped") == "hand_picked_list", res)
+check("7-2 the hand-picked pairs survive untouched",
+      stored == ["MYCOINUSDT", "OTHERUSDT"], stored)
+
+# The register endpoint records which kind of list was saved.
+client7 = main.app.test_client()
+with client7.session_transaction() as s7:
+    s7["logged_in"] = True; s7["username"] = "uni"
+
+# Stub the live-price thread: fake symbols would otherwise spawn real
+# websocket connections that can crash the interpreter at shutdown.
+_wl_stub = patch.object(main, "_ensure_wl_thread", lambda *a, **k: None)
+_wl_stub.start()
+
+client7.post("/api/watchlist/register",
+             json={"pairs": ["AUSDT", "BUSDT"],
+                   "universe": {"source": "movers",
+                                "cfg": {"dir": "both", "gainers": 7, "losers": 7}}})
+with main.app.app_context():
+    saved = main.load_user_universe_config("uni")
+check("7-3 a movers load is recorded as movers", saved.get("source") == "movers", saved)
+check("7-4 the settings are stored with it",
+      (saved.get("cfg") or {}).get("gainers") == 7, saved)
+
+client7.post("/api/watchlist/register", json={"pairs": ["CUSDT"]})
+with main.app.app_context():
+    saved = main.load_user_universe_config("uni")
+check("7-5 a plain star sync is recorded as hand-picked",
+      saved.get("source") == "manual", saved)
+
+# And an out-of-range count cannot be injected through the API.
+client7.post("/api/watchlist/register",
+             json={"pairs": ["DUSDT"],
+                   "universe": {"source": "movers",
+                                "cfg": {"dir": "nonsense", "gainers": 99999,
+                                        "losers": -5}}})
+with main.app.app_context():
+    saved = main.load_user_universe_config("uni")
+c = saved.get("cfg") or {}
+check("7-6 an invalid direction falls back to both", c.get("direction") == "both", c)
+check("7-7 counts are clamped to a sane range",
+      c.get("gainers") == 400 and c.get("losers") == 0, c)
+
+_wl_stub.stop()
+
 print(f"\n{'='*60}")
 print(f"  TOTAL: {_pass+_fail}   PASS: {_pass}   FAIL: {_fail}")
 print(f"{'='*60}")
-if _fail:
-    sys.exit(1)
+
+# Registering pairs starts the watchlist price worker, which opens websocket
+# connections for each symbol. Fake test symbols leave those daemon threads
+# doing network I/O that intermittently crashes the interpreter during
+# shutdown — after every assertion has already run. Exiting immediately with
+# the real verdict keeps the result honest and the exit code deterministic.
+sys.stdout.flush()
+sys.stderr.flush()
+os._exit(1 if _fail else 0)

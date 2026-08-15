@@ -334,6 +334,58 @@ def _sel_pairs_file(username: str) -> str:
     return f"/tmp/zyni_selpairs_{safe}.json"
 
 
+def _universe_cfg_file(username: str) -> str:
+    safe = username.strip().lower().replace(" ", "_").replace("/", "").replace(".", "")
+    return f"/tmp/zyni_unicfg_{safe}.json"
+
+
+def load_user_universe_config(username: str) -> dict:
+    """How this user's Selected Pairs universe was built.
+
+    {"source": "movers"|"manual", "cfg": {...}}. The server can only rebuild
+    the universe correctly if it uses the SAME settings the user chose in the
+    tab — someone who picked 200 gainers and no losers must not have a
+    100/100 list rebuilt underneath them.
+
+    "manual" means the list was hand-picked, so it must be left alone.
+    """
+    try:
+        with open(_universe_cfg_file(username), "r") as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+def save_user_universe_config(username: str, descriptor: dict) -> None:
+    try:
+        if not isinstance(descriptor, dict):
+            return
+        src = str(descriptor.get("source") or "manual").lower()
+        if src not in ("movers", "manual"):
+            src = "manual"
+        raw = descriptor.get("cfg") or {}
+        cfg = {}
+        if isinstance(raw, dict):
+            direction = str(raw.get("dir") or raw.get("direction") or "both").lower()
+            cfg = {
+                "direction":      direction if direction in ("both", "gainers", "losers") else "both",
+                "gainers":        max(0, min(400, int(raw.get("gainers") or 0))),
+                "losers":         max(0, min(400, int(raw.get("losers") or 0))),
+                "min_volume":     max(0, float(raw.get("minVol") or raw.get("min_volume") or 0)),
+                "exclude_junk":   bool(raw.get("excludeJunk", raw.get("exclude_junk", True))),
+                "exclude_stocks": bool(raw.get("excludeStocks", raw.get("exclude_stocks", True))),
+                "exchange":       str(raw.get("exchange") or "binance").lower(),
+                "market":         str(raw.get("market") or "perpetual").lower(),
+            }
+        with open(_universe_cfg_file(username), "w") as f:
+            json.dump({"source": src, "cfg": cfg}, f)
+    except Exception as e:
+        print(f"[UNICFG-SAVE] Error for {username}: {e}")
+
+
 def load_user_selected_pairs(username: str) -> List[str]:
     """The user's full Selected Pairs universe.
 
@@ -8247,6 +8299,11 @@ def api_watchlist_register():
     # a live-price-feed limit, not a limit on how many pairs the user may
     # select — signal scanning needs the whole universe.
     save_user_selected_pairs(username, pairs)
+
+    # Record HOW the universe was built, so background rebuilds reproduce the
+    # user's own choice instead of a server default — and so a hand-picked
+    # list is recognised as hand-picked and left alone.
+    save_user_universe_config(username, data.get("universe") or {"source": "manual"})
 
     pairs = [p for p in pairs if p.endswith("USDT")][:10]  # max 10 for Nano
 

@@ -3683,15 +3683,19 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
       .catch(function(){/* offline / server error — keep localStorage-restored stars */});
   }
   var _wlSyncT=null;
-  function syncWatchlist(){
+  /* `universe` records HOW the list was built so the server can keep it fresh
+     the same way. Omitted means hand-picked, which the server must never
+     rebuild — otherwise pairs chosen on purpose would silently disappear. */
+  function syncWatchlist(universe){
     _saveStars();                              // durable local mirror, synchronous
     if(location.protocol==="file:") return;
+    var uni = universe || {source:"manual"};
     clearTimeout(_wlSyncT);
     _wlSyncT=setTimeout(function(){
       var pairs=Object.keys(ST.stars).filter(function(s){return ST.stars[s];});
       fetch("/api/watchlist/register",{method:"POST",credentials:"same-origin",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({pairs:pairs})})
+        body:JSON.stringify({pairs:pairs, universe:uni})})
         .catch(function(){/* keep optimistic local state */});
     },300);
   }
@@ -3923,7 +3927,16 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
         var keys=Object.keys(picked);
         if(!keys.length){ SP_CFG.note="No pairs matched — lower Min Vol or raise the counts."; if(ST.mode==="selected") renderSelectedPairs(); return; }
         ST.stars={}; keys.forEach(function(s){ ST.stars[s]=true; });   // clear previous, replace with movers
-        syncWatchlist();
+        /* Send the settings this universe was built with. The background
+           scanner rebuilds it every cycle using exactly these, so a user who
+           picked 200 gainers and no losers keeps getting that, not a default
+           100/100 split. */
+        syncWatchlist({source:"movers", cfg:{
+          dir: SP_CFG.dir, gainers: SP_CFG.gainers, losers: SP_CFG.losers,
+          minVol: SP_CFG.minVol, excludeJunk: SP_CFG.excludeJunk,
+          excludeStocks: SP_CFG.excludeStocks,
+          exchange: ST.exchange, market: ST.market
+        }});
         ST.scanMode="selected"; _ls_set("zyni-scanMode","selected");    // Main Scan will now use this universe
         SP_CFG.note="Loaded "+keys.length+" movers ("+((EXCH_NAME&&EXCH_NAME[ST.exchange])||ST.exchange)+"). Scope set to Selected — hit Scan in Main Scan.";
         if(ST.mode==="selected"){ renderSelectedPairs(); renderSelectedPairsInsight(); }
