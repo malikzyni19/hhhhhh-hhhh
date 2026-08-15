@@ -26478,6 +26478,11 @@ from live_monitor import (
     run_promotion_cycle,
     run_promotion_for_all_enabled,
     max_watched_coins,
+    run_alert_cycle,
+    run_alert_cycle_for_all_enabled,
+    track_open_alerts,
+    track_open_alerts_for_all,
+    module_accuracy,
     send_telegram_message,
     test_telegram_connection,
     escape_html,
@@ -31389,12 +31394,25 @@ def _lm_signal_promotion_loop():
         try:
             with app.app_context():
                 result = run_promotion_for_all_enabled()
+                # Alerting runs in the same tick so a coin promoted a moment
+                # ago is evaluated now rather than a whole cycle later.
+                alerts = run_alert_cycle_for_all_enabled()
+                # Resolve anything already open, so results land without
+                # needing a separate scheduler.
+                outcomes = track_open_alerts_for_all()
             with _lm_sig_promo_lock:
                 _lm_sig_promo_state["last_cycle_at"] = int(started)
                 _lm_sig_promo_state["last_result"]   = result
+                _lm_sig_promo_state["last_alerts"]   = alerts
+                _lm_sig_promo_state["last_outcomes"] = outcomes
                 _lm_sig_promo_state["last_error"]    = None
             if result.get("users"):
-                print(f"[SIG-3] promotion cycle: {result['users']} user(s) processed")
+                _sent = sum((r or {}).get("sent", 0)
+                            for r in (alerts.get("results") or {}).values())
+                _shadow = sum((r or {}).get("shadow", 0)
+                              for r in (alerts.get("results") or {}).values())
+                print(f"[SIG-3] cycle: {result['users']} user(s) | "
+                      f"alerts sent={_sent} recorded_only={_shadow}")
         except Exception as exc:
             with _lm_sig_promo_lock:
                 _lm_sig_promo_state["last_error"] = str(exc)[:200]
@@ -31433,6 +31451,65 @@ def api_lm_signal_promotion_run():
     except Exception as exc:
         print(f"[SIG-3] manual promotion failed user={uid}: {exc}")
         return jsonify({"ok": False, "error": "promotion_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-alerts/run", methods=["POST"])
+@login_required
+def api_lm_signal_alert_run():
+    """POST: Run one alert pass now for this user, instead of waiting.
+
+    Honours every setting, including the delivery switch — with sending off
+    this records what would have gone out without messaging anyone.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+    try:
+        result = run_alert_cycle(uid)
+        return jsonify({"ok": bool(result.get("ok", True)), "result": result})
+    except Exception as exc:
+        print(f"[SIG-6] manual alert run failed user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "alert_run_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-accuracy", methods=["GET"])
+@login_required
+def api_lm_signal_accuracy():
+    """GET: Measured hit rate per scan module, tier, and confluence count.
+
+    These are the numbers that replace the hand-set module weights. Buckets
+    below a small sample size are returned with reliable=False rather than
+    hidden, so a 100%-from-two-alerts figure cannot be mistaken for a fact.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+    try:
+        days = min(max(int(request.args.get("days", 90)), 1), 365)
+    except (TypeError, ValueError):
+        days = 90
+    try:
+        return jsonify(module_accuracy(uid, days=days))
+    except Exception as exc:
+        print(f"[SIG-7] accuracy failed user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "accuracy_unavailable",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-alerts/track", methods=["POST"])
+@login_required
+def api_lm_signal_track_run():
+    """POST: Resolve this user's open alerts now, instead of waiting."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+    try:
+        return jsonify({"ok": True, "result": track_open_alerts(uid)})
+    except Exception as exc:
+        print(f"[SIG-7] manual tracking failed user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "tracking_failed",
                         "message": str(exc)[:160]}), 500
 
 
