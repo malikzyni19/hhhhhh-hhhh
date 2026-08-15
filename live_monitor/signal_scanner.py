@@ -103,6 +103,33 @@ def _payload_for(kind: str) -> tuple:
     return None, None
 
 
+def chosen_pairs_across_users() -> list:
+    """Every pair any enabled user has explicitly asked to watch.
+
+    A user who narrows the scope to their own pairs would otherwise depend on
+    the market sweep happening to reach those symbols, which with a few dozen
+    pairs per cycle out of hundreds could take hours. Scanning them directly
+    each cycle guarantees the coins they actually care about stay covered.
+    """
+    from models import LiveMonitorSignalSettings as _S
+    from live_monitor.signal_settings import resolve_scope_symbols
+
+    out: list = []
+    try:
+        with _m.app.app_context():
+            rows = _S.query.filter(_S.enabled.is_(True)).all()
+            for r in rows:
+                if (r.coin_scope or "") not in ("watchlist", "selected_pairs"):
+                    continue
+                for sym in (resolve_scope_symbols(r) or []):
+                    if sym not in out:
+                        out.append(sym)
+    except Exception as exc:
+        print(f"[SIG-8] chosen-pair lookup failed: {str(exc)[:100]}")
+    # Bounded so one user cannot make every cycle enormous.
+    return out[:120]
+
+
 def _scan_runner_identity():
     """Which account the background scans run as.
 
@@ -140,8 +167,11 @@ def _scan_runner_identity():
     return None
 
 
-def run_one_scan(kind: str, identity: dict = None, timeout_note: str = None) -> dict:
+def run_one_scan(kind: str, identity: dict = None, symbols: list = None) -> dict:
     """Run one scan type as if a browser had pressed its button.
+
+    `symbols` targets specific pairs instead of the market sweep — used to
+    guarantee coverage of pairs a user explicitly chose.
 
     Returns {ok, kind, status, elapsed_sec}. Never raises — a failing scan
     must not take the loop down with it.
@@ -153,6 +183,10 @@ def run_one_scan(kind: str, identity: dict = None, timeout_note: str = None) -> 
     url, body = _payload_for(kind)
     if url is None:
         return {"ok": False, "kind": kind, "reason": "unknown_scan_type"}
+
+    if symbols:
+        body = dict(body, scanMode="selected", symbols=list(symbols),
+                    roundRobin=False, pairsPerCycle=max(len(symbols), 5))
 
     started = time.time()
     try:
@@ -190,6 +224,15 @@ def run_scan_cycle(force_kind: str = None) -> dict:
             _state["index"] = (_state["index"] + 1) % len(SCAN_SEQUENCE)
 
     result = run_one_scan(kind, identity=identity)
+
+    # The market sweep moves through the exchange a batch at a time, so pairs
+    # a user pinned might not come round for hours. Cover them directly.
+    if kind == "scan":
+        chosen = chosen_pairs_across_users()
+        if chosen:
+            result["chosen_pairs_scanned"] = len(chosen)
+            targeted = run_one_scan("scan", identity=identity, symbols=chosen)
+            result["chosen_scan_ok"] = bool(targeted.get("ok"))
 
     with _state_lock:
         _state["cycles"]     += 1

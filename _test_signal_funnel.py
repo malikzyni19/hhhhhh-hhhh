@@ -316,6 +316,20 @@ with main.app.app_context():
           all(g["symbol"] == "CONFUSDT" for g in kept) and len(kept) >= 1,
           [g["symbol"] for g in kept])
 
+    # Scanner-backed scope filters exactly like the typed list.
+    from unittest.mock import patch as _p3
+    import main as _mm
+    st.coin_scope = "selected_pairs"
+    st.symbols_json = json.dumps([])          # deliberately empty: not used here
+    with _p3.object(_mm, "load_user_watchlist", return_value=["CONFUSDT"]):
+        kept = filter_groups_for_settings(groups, st)
+    check("6-5b Scanner-selected pairs filter the same way",
+          kept and all(g["symbol"] == "CONFUSDT" for g in kept),
+          [g["symbol"] for g in kept])
+    with _p3.object(_mm, "load_user_watchlist", return_value=["NOTHINGUSDT"]):
+        check("6-5c a Scanner list matching nothing yields no groups",
+              filter_groups_for_settings(groups, st) == [])
+
     st.coin_scope = "top_volume"
     st.timeframes_json = json.dumps(["1d"])
     check("6-6 timeframe filter excludes non-matching groups",

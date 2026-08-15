@@ -165,6 +165,36 @@ with patch("live_monitor.signal_scanner.run_one_scan", side_effect=_record_kind)
         run_scan_cycle(force_kind="bias")
 check("4-4 a forced scan type overrides the rotation", seen == ["bias"], seen)
 
+# Pairs a user pinned must be scanned directly — waiting for the market
+# sweep to reach them could take hours.
+targeted = []
+def _capture_symbols(kind, identity=None, symbols=None, **kw):
+    targeted.append({"kind": kind, "symbols": list(symbols or [])})
+    return {"ok": True, "kind": kind, "elapsed_sec": 0.1}
+
+with main.app.app_context():
+    st = get_or_create_signal_settings(ADMIN_ID)
+    st.enabled = True
+    st.coin_scope = "selected_pairs"
+    db.session.commit()
+
+with patch("live_monitor.signal_scanner.run_one_scan", side_effect=_capture_symbols), \
+     patch.object(main, "load_user_watchlist", return_value=["MYPAIRUSDT"]):
+    with main.app.app_context():
+        res = run_scan_cycle(force_kind="scan")
+
+check("4-5 a pinned pair gets its own targeted scan",
+      any(t["symbols"] == ["MYPAIRUSDT"] for t in targeted), targeted)
+check("4-6 the market sweep still runs alongside it",
+      any(not t["symbols"] for t in targeted), targeted)
+check("4-7 the cycle reports how many pinned pairs it covered",
+      res.get("chosen_pairs_scanned") == 1, res)
+
+with main.app.app_context():
+    st = get_or_create_signal_settings(ADMIN_ID)
+    st.coin_scope = "top_volume"
+    db.session.commit()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 section("GROUP 5 — failures stay contained")

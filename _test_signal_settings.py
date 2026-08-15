@@ -154,6 +154,38 @@ r = client.post("/api/live-monitor/signal-settings",
                 json={"symbols": ["BTC-USDT!!"]})
 check("3-14 malformed symbol rejected", r.status_code == 422)
 
+# ── Scanner-backed pair scope ────────────────────────────────────────────────
+# Reuses the pair list already chosen in the Scanner, so the same decision
+# does not have to be made twice and cannot drift between the two places.
+from unittest.mock import patch as _patch2                          # noqa: E402
+import main as _mainmod                                             # noqa: E402
+
+with _patch2.object(_mainmod, "load_user_watchlist", return_value=[]):
+    r = client.post("/api/live-monitor/signal-settings",
+                    json={"coin_scope": "selected_pairs"})
+check("3-14a choosing Scanner pairs with none selected is refused",
+      r.status_code == 422, r.get_json())
+check("3-14b the error explains where to fix it",
+      "no_pairs_selected" in str((r.get_json().get("field_errors") or {})),
+      r.get_json())
+
+with _patch2.object(_mainmod, "load_user_watchlist",
+                    return_value=["btcusdt", "ETHUSDT"]):
+    r = client.post("/api/live-monitor/signal-settings",
+                    json={"coin_scope": "selected_pairs"})
+    check("3-14c with pairs selected it is accepted", r.status_code == 200,
+          r.get_json())
+    st_now = r.get_json()["settings"]
+    check("3-14d the resolved pairs are shown back, upper-cased",
+          st_now.get("scope_symbols") == ["BTCUSDT", "ETHUSDT"],
+          st_now.get("scope_symbols"))
+    check("3-14e the typed list is left untouched by this scope",
+          st_now["symbols"] == ["BTCUSDT", "ETHUSDT"] or
+          isinstance(st_now["symbols"], list), st_now["symbols"])
+
+# Back to a scope that needs no list, so later tests are unaffected.
+client.post("/api/live-monitor/signal-settings", json={"coin_scope": "top_volume"})
+
 r = client.post("/api/live-monitor/signal-settings",
                 json={"timeframes": ["4h", "1h"]})
 check("3-15 valid timeframes accepted", r.status_code == 200)
