@@ -171,6 +171,80 @@ def chosen_pairs_across_users() -> list:
     return out[:120]
 
 
+# Scans that can be pointed at an explicit list of pairs. Trending is absent
+# deliberately: it ranks the whole market against itself, so asking it about
+# five specific coins is meaningless.
+CROSS_CHECK_SCANS = ["scan", "compressed", "bias", "ath_atl"]
+
+
+def cross_check_limit() -> int:
+    try:
+        return max(0, min(120, int(os.environ.get("ZYNI_SIG_CROSSCHECK_PAIRS", "40"))))
+    except (TypeError, ValueError):
+        return 40
+
+
+def candidate_symbols_for_crosscheck(limit: int = None) -> list:
+    """Pairs already flagged by at least one scan, worth a full examination.
+
+    The market sweep visits pairs in batches, so whether two scans ever look
+    at the same pair is otherwise down to timing. That makes confluence
+    accidental — a pair found by bias shift might never be checked for an
+    order block at all. These are the pairs to look at from every angle.
+    """
+    from models import LiveMonitorSignalCandidate as _C
+    from sqlalchemy.orm import load_only as _load_only
+
+    limit = cross_check_limit() if limit is None else limit
+    if limit <= 0:
+        return []
+
+    out: list = []
+    try:
+        with _m.app.app_context():
+            rows = (_C.query
+                    .options(_load_only(_C.symbol, _C.score, _C.detected_at))
+                    .filter(_C.status == "active")
+                    .order_by(_C.detected_at.desc(), _C.score.desc())
+                    .limit(limit * 4).all())
+            for r in rows:
+                if r.symbol and r.symbol not in out:
+                    out.append(r.symbol)
+                if len(out) >= limit:
+                    break
+    except Exception as exc:
+        print(f"[SIG-10] cross-check symbol lookup failed: {str(exc)[:100]}")
+    return out
+
+
+def cross_check_candidates(identity: dict = None) -> dict:
+    """Run every targetable scan against the pairs already flagged by any scan.
+
+    This is what turns confluence from luck into a real measurement: a pair
+    that bias shift found now also gets examined for order blocks, fair value
+    gaps, compression and extremes, so the AI judges one pair on everything
+    the app knows how to look for rather than on whichever scan happened to
+    reach it first.
+    """
+    symbols = candidate_symbols_for_crosscheck()
+    if not symbols:
+        return {"ok": True, "skipped": "no_candidates"}
+
+    identity = identity or _scan_runner_identity()
+    if not identity:
+        return {"ok": True, "skipped": "no_enabled_user"}
+
+    out = {"ok": True, "symbols": len(symbols), "scans": {}}
+    for kind in CROSS_CHECK_SCANS:
+        try:
+            res = run_one_scan(kind, identity=identity, symbols=symbols)
+            out["scans"][kind] = bool(res.get("ok"))
+        except Exception as exc:
+            out["scans"][kind] = False
+            print(f"[SIG-10] cross-check {kind} failed: {str(exc)[:100]}")
+    return out
+
+
 def _scan_runner_identity():
     """Which account the background scans run as.
 
@@ -226,8 +300,17 @@ def run_one_scan(kind: str, identity: dict = None, symbols: list = None) -> dict
         return {"ok": False, "kind": kind, "reason": "unknown_scan_type"}
 
     if symbols:
-        body = dict(body, scanMode="selected", symbols=list(symbols),
-                    roundRobin=False, pairsPerCycle=max(len(symbols), 5))
+        syms = list(symbols)
+        if kind in ("scan", "bias"):
+            body = dict(body, scanMode="selected", symbols=syms,
+                        roundRobin=False, pairsPerCycle=max(len(syms), 5))
+        elif kind in ("compressed", "ath_atl"):
+            # These take a plain symbol list rather than a scan mode.
+            body = dict(body, symbols=syms)
+        else:
+            # Trending ranks the whole market against itself, so a targeted
+            # request would be meaningless — leave it market-wide.
+            pass
 
     started = time.time()
     try:
@@ -277,6 +360,17 @@ def run_scan_cycle(force_kind: str = None) -> dict:
     result = run_one_scan(kind, identity=identity)
     if universe and universe.get("users"):
         result["universe_refreshed_for"] = universe["users"]
+
+    # Every pair any scan has flagged gets examined by all the other scans, so
+    # a pair is judged on everything the app can see rather than on whichever
+    # scan happened to reach it first.
+    try:
+        cross = cross_check_candidates(identity)
+        if cross.get("symbols"):
+            result["cross_checked_pairs"] = cross["symbols"]
+            result["cross_check_scans"] = cross.get("scans")
+    except Exception as exc:
+        print(f"[SIG-10] cross-check error: {str(exc)[:120]}")
 
     # The market sweep moves through the exchange a batch at a time, so pairs
     # a user pinned might not come round for hours. Cover them directly.

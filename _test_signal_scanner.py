@@ -159,8 +159,11 @@ section("GROUP 4 — rotation spreads the load")
 # ══════════════════════════════════════════════════════════════════════════════
 
 seen = []
-def _record_kind(kind, identity=None, **kw):
-    seen.append(kind)
+def _record_kind(kind, identity=None, symbols=None, **kw):
+    # A cycle now also cross-checks flagged pairs, which calls this with an
+    # explicit symbol list. Only the untargeted call is the rotation scan.
+    if not symbols:
+        seen.append(kind)
     return {"ok": True, "kind": kind, "elapsed_sec": 0.1}
 
 with patch("live_monitor.signal_scanner.run_one_scan", side_effect=_record_kind):
@@ -273,6 +276,103 @@ check("6-9 unauthenticated scan blocked",
 check("6-10 unauthenticated status blocked",
       anon.get("/api/live-monitor/signal-scan/status").status_code in (302, 401))
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 8 — one pair gets examined by every scan, not just the finder")
+# ══════════════════════════════════════════════════════════════════════════════
+# The market sweep visits pairs in batches, so whether two scans ever look at
+# the same pair was down to timing. That made confluence accidental: a pair
+# found by bias shift might never be checked for an order block at all.
+
+from live_monitor.signal_scanner import (                            # noqa: E402
+    cross_check_candidates, candidate_symbols_for_crosscheck, CROSS_CHECK_SCANS,
+)
+from live_monitor.signal_intake import adapt_bias, record_candidates  # noqa: E402
+from datetime import datetime, timezone                              # noqa: E402
+
+NOW8 = datetime(2026, 8, 13, 12, 0, 0, tzinfo=timezone.utc)
+
+with main.app.app_context():
+    C.query.delete(); db.session.commit()
+    # One pair, found by ONE scan only.
+    record_candidates(adapt_bias({"symbol": "LONEUSDT", "timeframe": "4h",
+                                  "bias": "bullish", "score": 80}, now=NOW8))
+
+    syms = candidate_symbols_for_crosscheck()
+check("8-1 a flagged pair is queued for full examination",
+      syms == ["LONEUSDT"], syms)
+
+seen8 = []
+def _capture8(kind, identity=None, symbols=None, **kw):
+    seen8.append({"kind": kind, "symbols": list(symbols or [])})
+    return {"ok": True, "kind": kind}
+
+with patch("live_monitor.signal_scanner.run_one_scan", side_effect=_capture8):
+    with main.app.app_context():
+        res = cross_check_candidates({"username": "boss", "admin": True})
+
+check("8-2 every targetable scan examined the pair",
+      sorted(t["kind"] for t in seen8) == sorted(CROSS_CHECK_SCANS),
+      [t["kind"] for t in seen8])
+check("8-3 each was pointed at that exact pair",
+      all(t["symbols"] == ["LONEUSDT"] for t in seen8), seen8)
+check("8-4 the result reports what was covered",
+      res.get("symbols") == 1 and len(res.get("scans") or {}) == 4, res)
+
+check("8-5 trending is deliberately excluded — it ranks the whole market",
+      "trending" not in CROSS_CHECK_SCANS, CROSS_CHECK_SCANS)
+
+with main.app.app_context():
+    C.query.delete(); db.session.commit()
+    res = cross_check_candidates({"username": "boss"})
+check("8-6 nothing to examine is a clean skip, not an error",
+      res.get("skipped") == "no_candidates", res)
+
+# The targeted payloads must actually carry the symbols for each scan type.
+u, b = _payload_for("compressed")
+import live_monitor.signal_scanner as _sc8                            # noqa: E402
+with patch.object(_sc8, "_scan_runner_identity",
+                  return_value={"username": "boss", "admin": True}):
+    sent = {}
+    class _Resp8:
+        status_code = 200
+        def get_json(self): return {}
+    class _Cli8:
+        def session_transaction(self):
+            class _S:
+                def __enter__(s): return {}
+                def __exit__(s, *a): return False
+            return _S()
+        def post(self, url, json=None):
+            sent[url] = json
+            return _Resp8()
+    with patch.object(main.app, "test_client", return_value=_Cli8()):
+        for kind in CROSS_CHECK_SCANS:
+            run_one_scan(kind, symbols=["AAAUSDT", "BBBUSDT"])
+
+check("8-7 the main scan targets the pairs by selected mode",
+      sent["/api/scan"]["scanMode"] == "selected" and
+      sent["/api/scan"]["symbols"] == ["AAAUSDT", "BBBUSDT"], sent.get("/api/scan"))
+check("8-8 compressed receives the pair list",
+      sent["/api/compressed_scan"]["symbols"] == ["AAAUSDT", "BBBUSDT"],
+      sent.get("/api/compressed_scan"))
+check("8-9 bias receives the pair list",
+      sent["/api/bias_scan"]["symbols"] == ["AAAUSDT", "BBBUSDT"],
+      sent.get("/api/bias_scan"))
+check("8-10 ATH/ATL receives the pair list",
+      sent["/api/ath_atl_scan"]["symbols"] == ["AAAUSDT", "BBBUSDT"],
+      sent.get("/api/ath_atl_scan"))
+
+# And a cross-check failure must never stop the cycle.
+with patch("live_monitor.signal_scanner.cross_check_candidates",
+           side_effect=RuntimeError("boom")), \
+     patch("live_monitor.signal_scanner.run_one_scan",
+           return_value={"ok": True, "kind": "scan"}):
+    with main.app.app_context():
+        res = run_scan_cycle(force_kind="scan")
+check("8-11 a cross-check failure does not stop the scan cycle",
+      res.get("ok") is True, res)
 
 print(f"\n{'='*60}")
 print(f"  TOTAL: {_pass+_fail}   PASS: {_pass}   FAIL: {_fail}")

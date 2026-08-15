@@ -113,6 +113,9 @@ from live_monitor.signal_scanner import (
     scanner_state,
     scanner_enabled,
     SCAN_SEQUENCE,
+    cross_check_candidates,
+    candidate_symbols_for_crosscheck,
+    CROSS_CHECK_SCANS,
 )
 from live_monitor.selected_universe import (
     build_universe,
@@ -390,6 +393,9 @@ __all__ = [
     "scanner_state",
     "scanner_enabled",
     "SCAN_SEQUENCE",
+    "cross_check_candidates",
+    "candidate_symbols_for_crosscheck",
+    "CROSS_CHECK_SCANS",
     # Phase SIG-9: server-side Selected Pairs universe refresh
     "build_universe",
     "refresh_universe_for_user",
