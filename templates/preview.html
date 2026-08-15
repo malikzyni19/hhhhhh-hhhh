@@ -880,6 +880,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 #lmDhWrap{margin-top:12px}
 .lm-left{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:var(--bg-panel)}
 .lm-left-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
+.lm-tabgrp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px 5px;margin-top:2px;font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--text-3);background:var(--bg-panel);position:sticky;top:0;z-index:2;border-bottom:1px solid var(--border)}
+.lm-tabgrp-head:first-child{margin-top:0}
+.lm-tabgrp-n{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--accent);letter-spacing:0}
 .lm-left-head span{font-size:10px;font-weight:700;letter-spacing:1px;color:var(--text-3)}
 .lm-cards{overflow-y:auto;flex:1;padding:8px}
 .setup-card{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:11px 12px;margin-bottom:7px;cursor:pointer;transition:border-color .18s,background .18s;position:relative}
@@ -6648,6 +6651,12 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
       var el=document.getElementById('lmWsPane-'+w);
       if(el) el.hidden=(w!==ws);
     });
+    /* The setup list belongs to Live Setups. It used to sit permanently beside
+       the sidebar, which made sense when every other pane acted ON a selected
+       setup — Signal Settings and Signal History do not, so it was just a
+       column of clutter next to them. */
+    var left=document.querySelector('.lm-left');
+    if(left) left.style.display=(ws==='setups')?'':'none';
     // Sync sidebar active state
     var aside=document.querySelector('.side');
     if(aside){
@@ -8497,6 +8506,34 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
     return m[s]||"Watching";
   }
 
+  /* Which scan tab a setup came from. A setup can carry several scan types
+     (e.g. "bias_shift+compressed"), so the strongest one decides the heading —
+     ordered the same way the confluence engine weights them, so the heading
+     matches the reason the setup was promoted. */
+  var _LM_TAB_ORDER = [
+    {key:"ob",              tab:"Order Block"},
+    {key:"bb",              tab:"Breaker Block"},
+    {key:"breaker",         tab:"Breaker Block"},
+    {key:"bias_shift",      tab:"Bias Detection"},
+    {key:"bias",            tab:"Bias Detection"},
+    {key:"liquidity_sweep", tab:"Liquidity Sweep"},
+    {key:"fvg",             tab:"Fair Value Gap"},
+    {key:"fib_confluence",  tab:"FIB Confluence"},
+    {key:"fib",             tab:"FIB Confluence"},
+    {key:"ath_atl",         tab:"ATH / ATL"},
+    {key:"compressed",      tab:"Compressed"},
+    {key:"accumulation",    tab:"Accumulation"},
+    {key:"trending",        tab:"Accumulation"}
+  ];
+  function _lmSetupTab(item){
+    var hay=((item.setup_type||"")+" "+(item.source_tab||"")).toLowerCase();
+    for(var i=0;i<_LM_TAB_ORDER.length;i++){
+      if(hay.indexOf(_LM_TAB_ORDER[i].key)!==-1) return _LM_TAB_ORDER[i].tab;
+    }
+    if(hay.indexOf("manual")!==-1) return "Added by hand";
+    return "Other";
+  }
+
   function _lmRenderCards(){
     var box=document.getElementById("lmCards"); if(!box) return;
     var cnt=document.getElementById("lmCount");
@@ -8515,7 +8552,18 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
       if(!_lmSelItem) _lmRenderRight(null);
       return;
     }
-    box.innerHTML=items.map(function(item,idx){
+    /* Group by scan tab, keeping the original index so click handling below
+       still resolves to the right item after regrouping. */
+    var _groups=[], _byTab={};
+    items.forEach(function(item,idx){
+      var tab=_lmSetupTab(item);
+      if(!_byTab[tab]){ _byTab[tab]={tab:tab, rows:[]}; _groups.push(_byTab[tab]); }
+      _byTab[tab].rows.push({item:item, idx:idx});
+    });
+    // Biggest groups first, so the busiest scan is what you see without scrolling.
+    _groups.sort(function(a,b){ return b.rows.length - a.rows.length; });
+
+    function _cardHtml(item, idx){
       var health=_lmHealthScore(item);
       var hClass=health>=70?"hi":health>=45?"mid":"lo";
       var hColor=health>=70?"var(--accent)":health>=45?"var(--accent-teal)":"var(--yellow)";
@@ -8550,6 +8598,14 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
         '<div class="sc-health-bar"><div class="sc-health-fill '+hClass+'" style="width:'+health+'%"></div></div>'+
         '<div class="sc-bot"><span class="sc-status '+status+'">'+statusLbl+'</span>'+setupTag+'</div>'+
       '</div>';
+    }
+
+    box.innerHTML=_groups.map(function(g){
+      return '<div class="lm-tabgrp-head">'+
+               '<span>'+esc(g.tab)+'</span>'+
+               '<span class="lm-tabgrp-n">'+g.rows.length+'</span>'+
+             '</div>'+
+             g.rows.map(function(r){ return _cardHtml(r.item, r.idx); }).join("");
     }).join("");
     [].forEach.call(box.querySelectorAll(".setup-card"),function(card){
       card.addEventListener("click",function(){
