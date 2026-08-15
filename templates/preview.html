@@ -2349,6 +2349,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 </div>
 
 <script>
+/* Set once by the server on the first render after a real login. */
+window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
+</script>
+<script>
 (function fitApp(){
   var W=1560;                       // design width — must fit the full topbar
   function fit(){
@@ -3842,12 +3846,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function _spLoadMovers(){
     _spReadInputs();
     if(SP_CFG.loading) return;
-    SP_CFG.loading=true; SP_CFG.note="Loading market…"; renderSelectedPairs();
+    // Rendering the Selected Pairs view / starting its live feed only makes
+    // sense when that tab is showing; on login auto-load the user is on Main Scan.
+    SP_CFG.loading=true; SP_CFG.note="Loading market…"; if(ST.mode==="selected") renderSelectedPairs();
     fetch("/api/pairs?limit=1000&market="+encodeURIComponent(ST.market)+"&exchange="+encodeURIComponent(ST.exchange),{credentials:"same-origin"})
       .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
       .then(function(data){
         SP_CFG.loading=false;
-        if(!Array.isArray(data) || !data.length){ SP_CFG.note="No pairs returned for this exchange."; renderSelectedPairs(); return; }
+        if(!Array.isArray(data) || !data.length){ SP_CFG.note="No pairs returned for this exchange."; if(ST.mode==="selected") renderSelectedPairs(); return; }
         var pool=data.filter(function(p){
           if(!p || typeof p.changePct!=="number") return false;
           if(SP_CFG.minVol && (p.quoteVolume||0) < SP_CFG.minVol) return false;
@@ -3862,14 +3868,15 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         if(SP_CFG.dir==="both"||SP_CFG.dir==="gainers") byChg.slice(0,SP_CFG.gainers).forEach(add);
         if(SP_CFG.dir==="both"||SP_CFG.dir==="losers")  byChg.slice(Math.max(0,byChg.length-SP_CFG.losers)).forEach(add);
         var keys=Object.keys(picked);
-        if(!keys.length){ SP_CFG.note="No pairs matched — lower Min Vol or raise the counts."; renderSelectedPairs(); return; }
+        if(!keys.length){ SP_CFG.note="No pairs matched — lower Min Vol or raise the counts."; if(ST.mode==="selected") renderSelectedPairs(); return; }
         ST.stars={}; keys.forEach(function(s){ ST.stars[s]=true; });   // clear previous, replace with movers
         syncWatchlist();
         ST.scanMode="selected"; _ls_set("zyni-scanMode","selected");    // Main Scan will now use this universe
         SP_CFG.note="Loaded "+keys.length+" movers ("+((EXCH_NAME&&EXCH_NAME[ST.exchange])||ST.exchange)+"). Scope set to Selected — hit Scan in Main Scan.";
-        renderSelectedPairs(); renderSelectedPairsInsight();
+        if(ST.mode==="selected"){ renderSelectedPairs(); renderSelectedPairsInsight(); }
+        else if(typeof _renderTabCtrls==="function"){ _renderTabCtrls(); }   // reflect Scope=Selected on Main Scan controls
       })
-      .catch(function(){ SP_CFG.loading=false; SP_CFG.note="Error loading movers."; renderSelectedPairs(); });
+      .catch(function(){ SP_CFG.loading=false; SP_CFG.note="Error loading movers."; if(ST.mode==="selected") renderSelectedPairs(); });
   }
   function _spScanInMain(){
     if(!_spStarList().length){ SP_CFG.note="Load some pairs first."; renderSelectedPairs(); return; }
@@ -20241,7 +20248,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
      the first switchView() call. */
   try{ document.body.setAttribute("data-view", ST.view||"scanner"); }catch(_){ }
 
-  loadWatchlist();
+  if(window._zyniJustLoggedIn){
+    // First render after a real login → auto-load top gainers/losers into the
+    // Selected Pairs universe and set Scope=Selected (overrides the restore).
+    try{ _spLoadMovers(); }catch(_){ loadWatchlist(); }
+  } else {
+    loadWatchlist();            // normal load/refresh → restore the persisted set
+  }
   loadLiveMonitorItems();       // Phase 1: pre-load DB-backed Live Monitor items
   loadLiveMonitorAiProviders(); // Phase 6.5: pre-load AI provider list
   loadTokens();                 // load token counter without triggering a scan
