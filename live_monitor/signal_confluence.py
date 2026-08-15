@@ -235,10 +235,16 @@ def filter_groups_for_settings(groups: list, settings) -> list:
         tfs = set(json.loads(settings.timeframes_json or "[]"))
     except (ValueError, TypeError):
         tfs = set()
+    # Both list-based scopes resolve through one helper, so the Scanner-backed
+    # list and the typed list behave identically from here on.
     try:
-        watch = set(json.loads(settings.symbols_json or "[]"))
-    except (ValueError, TypeError):
-        watch = set()
+        from live_monitor.signal_settings import resolve_scope_symbols
+        watch = set(resolve_scope_symbols(settings))
+    except Exception:
+        try:
+            watch = set(json.loads(settings.symbols_json or "[]"))
+        except (ValueError, TypeError):
+            watch = set()
 
     min_conf   = int(settings.min_confluence or 1)
     allow_long  = bool(settings.allow_long)
@@ -264,7 +270,7 @@ def filter_groups_for_settings(groups: list, settings) -> list:
         if tfs and not (set(g.get("timeframes") or []) & tfs):
             continue
 
-        if scope == "watchlist" and g["symbol"] not in watch:
+        if scope in ("watchlist", "selected_pairs") and g["symbol"] not in watch:
             continue
 
         out.append({**g, "matched_modules": kept})

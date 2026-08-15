@@ -32,7 +32,10 @@ SIGNAL_MODULES: list = [
 VALID_MODULE_KEYS = frozenset(m["key"] for m in SIGNAL_MODULES)
 
 VALID_TRIGGER_MODES = frozenset({"approach", "in_zone", "both"})
-VALID_COIN_SCOPES   = frozenset({"top_volume", "watchlist", "all"})
+# "selected_pairs" reuses the pair list the user already picked in the
+# Scanner, so the same choice does not have to be retyped here and stays in
+# step automatically when they change it there.
+VALID_COIN_SCOPES   = frozenset({"top_volume", "watchlist", "selected_pairs", "all"})
 VALID_TIMEFRAMES    = frozenset({"5m", "15m", "30m", "1h", "4h", "1d"})
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
@@ -166,6 +169,10 @@ def serialize_signal_settings(row, include_secrets: bool = False) -> dict:
         "updated_at":            (row.updated_at.isoformat()
                                   if row.updated_at else None),
     }
+    try:
+        out["scope_symbols"] = resolve_scope_symbols(row)
+    except Exception:
+        out["scope_symbols"] = []
     if include_secrets:
         out["telegram_bot_token"] = token or None
     return out
@@ -273,6 +280,9 @@ def apply_signal_settings_update(row, payload: dict) -> tuple:
     if row.coin_scope == "watchlist" and not _json_list(row.symbols_json, []):
         errors["symbols"] = "watchlist_scope_requires_at_least_one_symbol"
 
+    if row.coin_scope == "selected_pairs" and not resolve_scope_symbols(row):
+        errors["coin_scope"] = "no_pairs_selected_in_scanner"
+
     # Turning delivery on without a linked Telegram bot would silently do
     # nothing — surface it as an error rather than failing quietly at send time.
     if row.delivery_enabled and not (row.telegram_bot_token and row.telegram_chat_id):
@@ -284,6 +294,39 @@ def apply_signal_settings_update(row, payload: dict) -> tuple:
     if changed:
         row.updated_at = datetime.now(timezone.utc)
     return True, {}, changed
+
+
+def resolve_scope_symbols(settings) -> list:
+    """The symbols a user's coin scope actually resolves to.
+
+    Only the two list-based scopes produce symbols; "top_volume" and "all"
+    are resolved against the exchange at scan time, not here.
+    """
+    if settings is None:
+        return []
+    scope = (getattr(settings, "coin_scope", "") or "").lower()
+
+    if scope == "watchlist":
+        return _json_list(getattr(settings, "symbols_json", None), [])
+
+    if scope == "selected_pairs":
+        # Deferred import: main owns the Scanner's saved pair list.
+        try:
+            import main as _m
+            from models import User
+            user = User.query.filter_by(id=settings.user_id).first()
+            if not user:
+                return []
+            # The full Selected Pairs universe, not the 10-pair live-price
+            # watchlist — those are different lists with different limits.
+            return [str(p).strip().upper()
+                    for p in (_m.load_user_selected_pairs(user.username) or [])
+                    if str(p).strip()]
+        except Exception as exc:
+            print(f"[SIG] selected-pairs lookup failed: {str(exc)[:100]}")
+            return []
+
+    return []
 
 
 def signal_module_catalog() -> list:

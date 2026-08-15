@@ -154,6 +154,38 @@ r = client.post("/api/live-monitor/signal-settings",
                 json={"symbols": ["BTC-USDT!!"]})
 check("3-14 malformed symbol rejected", r.status_code == 422)
 
+# ── Scanner-backed pair scope ────────────────────────────────────────────────
+# Reuses the pair list already chosen in the Scanner, so the same decision
+# does not have to be made twice and cannot drift between the two places.
+from unittest.mock import patch as _patch2                          # noqa: E402
+import main as _mainmod                                             # noqa: E402
+
+with _patch2.object(_mainmod, "load_user_selected_pairs", return_value=[]):
+    r = client.post("/api/live-monitor/signal-settings",
+                    json={"coin_scope": "selected_pairs"})
+check("3-14a choosing Scanner pairs with none selected is refused",
+      r.status_code == 422, r.get_json())
+check("3-14b the error explains where to fix it",
+      "no_pairs_selected" in str((r.get_json().get("field_errors") or {})),
+      r.get_json())
+
+with _patch2.object(_mainmod, "load_user_selected_pairs",
+                    return_value=["btcusdt", "ETHUSDT"]):
+    r = client.post("/api/live-monitor/signal-settings",
+                    json={"coin_scope": "selected_pairs"})
+    check("3-14c with pairs selected it is accepted", r.status_code == 200,
+          r.get_json())
+    st_now = r.get_json()["settings"]
+    check("3-14d the resolved pairs are shown back, upper-cased",
+          st_now.get("scope_symbols") == ["BTCUSDT", "ETHUSDT"],
+          st_now.get("scope_symbols"))
+    check("3-14e the typed list is left untouched by this scope",
+          st_now["symbols"] == ["BTCUSDT", "ETHUSDT"] or
+          isinstance(st_now["symbols"], list), st_now["symbols"])
+
+# Back to a scope that needs no list, so later tests are unaffected.
+client.post("/api/live-monitor/signal-settings", json={"coin_scope": "top_volume"})
+
 r = client.post("/api/live-monitor/signal-settings",
                 json={"timeframes": ["4h", "1h"]})
 check("3-15 valid timeframes accepted", r.status_code == 200)
@@ -326,6 +358,58 @@ with patch("live_monitor.telegram_notify.requests.post",
     res = send_telegram_message(GOOD_TOKEN, "123", "hi")
 check("6-13 connection failure returns error, never raises",
       res["ok"] is False and res["error"] == "network", res)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 7 — the Selected Pairs universe is stored in full")
+# ══════════════════════════════════════════════════════════════════════════════
+# The live-price watchlist is capped at 10, because every pair in it gets a
+# websocket price subscription. The Selected Pairs tab is a different thing —
+# a scan universe that can be hundreds of pairs and needs no live prices.
+# Reading the capped list meant a user who selected 100 pairs would have had
+# signals on only 10 of them.
+
+import main as _mm7                                                   # noqa: E402
+
+many = [f"COIN{i}USDT" for i in range(40)]
+_mm7.save_user_selected_pairs("bigpicker", many)
+full = _mm7.load_user_selected_pairs("bigpicker")
+check("7-1 the whole universe survives, not just the first 10",
+      len(full) == 40, len(full))
+check("7-2 order is preserved",
+      full[0] == "COIN0USDT" and full[39] == "COIN39USDT")
+
+_mm7.save_user_selected_pairs("junkpicker", ["btcusdt", "NOTAPAIR", "ETHUSDT", ""])
+check("7-3 non-USDT entries dropped and case normalized",
+      _mm7.load_user_selected_pairs("junkpicker") == ["BTCUSDT", "ETHUSDT"],
+      _mm7.load_user_selected_pairs("junkpicker"))
+
+_mm7.save_user_selected_pairs("hugepicker", [f"BIG{i}USDT" for i in range(900)])
+check("7-4 an absurd list is bounded rather than unbounded",
+      len(_mm7.load_user_selected_pairs("hugepicker")) == 500,
+      len(_mm7.load_user_selected_pairs("hugepicker")))
+
+# Someone who has not re-synced since this store existed must not see an empty
+# list — fall back to the old watchlist rather than silently matching nothing.
+_mm7.save_user_watchlist("legacyuser", ["OLDUSDT"])
+check("7-5 falls back to the old watchlist when no universe is saved yet",
+      _mm7.load_user_selected_pairs("legacyuser") == ["OLDUSDT"],
+      _mm7.load_user_selected_pairs("legacyuser"))
+
+# Registering must fill BOTH stores: the full universe, and the capped feed.
+client7 = main.app.test_client()
+with client7.session_transaction() as s7:
+    s7["logged_in"] = True; s7["username"] = "siguser"
+
+r = client7.post("/api/watchlist/register",
+                 json={"pairs": [f"REG{i}USDT" for i in range(25)]})
+check("7-6 registering pairs succeeds", r.status_code == 200, r.status_code)
+check("7-7 all 25 kept for signal scanning",
+      len(_mm7.load_user_selected_pairs("siguser")) == 25,
+      len(_mm7.load_user_selected_pairs("siguser")))
+check("7-8 the live-price feed list is still capped at 10",
+      len(_mm7.load_user_watchlist("siguser")) == 10,
+      len(_mm7.load_user_watchlist("siguser")))
 
 
 print(f"\n{'='*60}")

@@ -318,6 +318,49 @@ def save_user_watchlist(username: str, pairs: List[str]) -> None:
     except Exception as e:
         print(f"[WL-SAVE] Error for {username}: {e}")
 
+
+# ── Selected Pairs universe (full list) ──────────────────────────────────────
+# The watchlist above is capped at 10 because every pair in it gets a live
+# websocket price subscription. The Selected Pairs tab is a different thing:
+# a scan universe that can be hundreds of pairs and needs no live prices.
+# Storing it separately lets signal scanning use the whole universe without
+# putting hundreds of symbols on the live-price feed.
+
+_SELECTED_PAIRS_MAX = 500
+
+
+def _sel_pairs_file(username: str) -> str:
+    safe = username.strip().lower().replace(" ", "_").replace("/", "").replace(".", "")
+    return f"/tmp/zyni_selpairs_{safe}.json"
+
+
+def load_user_selected_pairs(username: str) -> List[str]:
+    """The user's full Selected Pairs universe.
+
+    Falls back to the 10-pair watchlist for accounts that have not re-synced
+    since this store was added, so the feature works immediately rather than
+    appearing empty until the user touches the Scanner again.
+    """
+    try:
+        with open(_sel_pairs_file(username), "r") as f:
+            data = json.load(f)
+            out = [str(p).strip().upper() for p in data if str(p).strip()]
+            if out:
+                return out
+    except Exception:
+        pass
+    return load_user_watchlist(username)
+
+
+def save_user_selected_pairs(username: str, pairs: List[str]) -> None:
+    try:
+        clean = [str(p).strip().upper() for p in pairs if str(p).strip()]
+        clean = [p for p in clean if p.endswith("USDT")][:_SELECTED_PAIRS_MAX]
+        with open(_sel_pairs_file(username), "w") as f:
+            json.dump(clean, f)
+    except Exception as e:
+        print(f"[SELPAIRS-SAVE] Error for {username}: {e}")
+
 # ============================================================
 # EMAIL CONFIG — Login Notifications
 # Set these in Koyeb environment variables:
@@ -8199,6 +8242,12 @@ def api_watchlist_register():
     username = session.get("username", "default")
     data  = request.get_json(force=True) or {}
     pairs = [str(p).strip().upper() for p in data.get("pairs", []) if str(p).strip()]
+
+    # Keep the FULL Selected Pairs universe before trimming. The trim below is
+    # a live-price-feed limit, not a limit on how many pairs the user may
+    # select — signal scanning needs the whole universe.
+    save_user_selected_pairs(username, pairs)
+
     pairs = [p for p in pairs if p.endswith("USDT")][:10]  # max 10 for Nano
 
     # Save to server permanently
@@ -26626,6 +26675,13 @@ from live_monitor import (
     track_open_alerts,
     track_open_alerts_for_all,
     module_accuracy,
+    run_scan_cycle,
+    run_one_scan,
+    run_all_scans_once,
+    scanner_loop,
+    scanner_state,
+    scanner_enabled,
+    SCAN_SEQUENCE,
     send_telegram_message,
     test_telegram_connection,
     escape_html,
@@ -31579,6 +31635,80 @@ if _lm_signal_promotion_enabled():
     _ensure_lm_signal_promotion()
 else:
     print("[SIG-3] promotion scheduler DISABLED (ZYNI_SIG_PROMOTION_ENABLED not truthy)")
+
+
+# ── Phase SIG-8: background scanner ──────────────────────────────────────────
+# Runs the scan tabs server-side on a timer. Without this the funnel only ever
+# saw setups when a browser pressed a scan button, so a closed browser meant
+# no signals at all.
+
+_lm_sig_scan_thread = None
+
+
+def _ensure_lm_signal_scanner():
+    global _lm_sig_scan_thread
+    if _lm_sig_scan_thread and _lm_sig_scan_thread.is_alive():
+        return
+    _lm_sig_scan_thread = threading.Thread(
+        target=scanner_loop, daemon=True, name="lm-signal-scan")
+    _lm_sig_scan_thread.start()
+
+
+if scanner_enabled():
+    _ensure_lm_signal_scanner()
+else:
+    print("[SIG-8] background scanner DISABLED (ZYNI_SIG_SCAN_ENABLED not truthy)")
+
+
+@app.route("/api/live-monitor/signal-scan/run", methods=["POST"])
+@login_required
+def api_lm_signal_scan_run():
+    """POST: Scan right now instead of waiting for the next cycle.
+
+    Body may name one scan type ({"kind": "bias"}); with none given every scan
+    type runs, which is heavier but returns results immediately.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+    body = request.get_json(force=True, silent=True) or {}
+    kind = (body.get("kind") or "").strip().lower() or None
+    try:
+        if kind:
+            if kind not in SCAN_SEQUENCE:
+                return jsonify({"ok": False, "error": "unknown_scan_type",
+                                "allowed": list(SCAN_SEQUENCE)}), 400
+            return jsonify({"ok": True, "result": run_one_scan(kind)})
+        return jsonify(run_all_scans_once())
+    except Exception as exc:
+        print(f"[SIG-8] manual scan failed user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "scan_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-scan/status", methods=["GET"])
+@login_required
+def api_lm_signal_scan_status():
+    """GET: Is the background scanner running, and what did it last do?
+
+    The first thing to check when signals are not appearing.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+    try:
+        from models import LiveMonitorSignalCandidate as _C
+        state = scanner_state()
+        state["thread_alive"] = bool(_lm_sig_scan_thread
+                                     and _lm_sig_scan_thread.is_alive())
+        try:
+            state["candidates_stored"] = _C.query.filter_by(status="active").count()
+        except Exception:
+            state["candidates_stored"] = None
+        return jsonify({"ok": True, "scanner": state})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "status_unavailable",
+                        "message": str(exc)[:160]}), 500
 
 
 @app.route("/api/live-monitor/signal-promotion/run", methods=["POST"])
