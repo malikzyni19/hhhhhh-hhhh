@@ -218,12 +218,24 @@ def run_scan_cycle(force_kind: str = None) -> dict:
         # Nobody has the engine on, so there is nothing to scan for.
         return {"ok": True, "skipped": "no_enabled_user"}
 
+    # The Selected Pairs universe is rebuilt from current movers, so it must
+    # be refreshed before the cycle reads it — otherwise a browser-closed
+    # server keeps scanning whatever list the tab last happened to push.
+    try:
+        from live_monitor.selected_universe import refresh_universes_for_enabled_users
+        universe = refresh_universes_for_enabled_users(scan_exchange(), scan_market())
+    except Exception as exc:
+        universe = {"ok": False, "reason": str(exc)[:100]}
+        print(f"[SIG-9] universe refresh error: {str(exc)[:120]}")
+
     with _state_lock:
         kind = force_kind or SCAN_SEQUENCE[_state["index"] % len(SCAN_SEQUENCE)]
         if not force_kind:
             _state["index"] = (_state["index"] + 1) % len(SCAN_SEQUENCE)
 
     result = run_one_scan(kind, identity=identity)
+    if universe and universe.get("users"):
+        result["universe_refreshed_for"] = universe["users"]
 
     # The market sweep moves through the exchange a batch at a time, so pairs
     # a user pinned might not come round for hours. Cover them directly.

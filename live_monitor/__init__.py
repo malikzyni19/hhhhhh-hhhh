@@ -114,6 +114,13 @@ from live_monitor.signal_scanner import (
     scanner_enabled,
     SCAN_SEQUENCE,
 )
+from live_monitor.selected_universe import (
+    build_universe,
+    refresh_universe_for_user,
+    refresh_universes_for_enabled_users,
+    auto_universe_enabled,
+    universe_config,
+)
 from live_monitor.smc_orderflow_fusion import _lm_build_smc_orderflow_fusion
 from live_monitor.ai_execution_context import _lm_build_ai_execution_context
 from live_monitor.ai_trade_control import _lm_build_ai_trade_control_decision
@@ -383,4 +390,10 @@ __all__ = [
     "scanner_state",
     "scanner_enabled",
     "SCAN_SEQUENCE",
+    # Phase SIG-9: server-side Selected Pairs universe refresh
+    "build_universe",
+    "refresh_universe_for_user",
+    "refresh_universes_for_enabled_users",
+    "auto_universe_enabled",
+    "universe_config",
 ]
