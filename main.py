@@ -5949,6 +5949,149 @@ def get_pairs_exchange(exchange: str, market: str = "perpetual") -> List[Dict[st
         return get_pairs(market)  # Binance (default)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  Selected Pairs — server-side Movers auto-refresh (runs 24/7, browser-free)
+#  A background thread recomputes each opted-in user's top gainers/losers every
+#  15 min and stores them as that user's watchlist, so the Selected Pairs stay
+#  current even when nobody has the site open.
+# ══════════════════════════════════════════════════════════════════════════
+_SP_STABLE_PREFIX = ("USDC", "BUSD", "TUSD", "DAI", "FDUSD", "USDD", "USDP", "GUSD", "EUR", "AEUR")
+_SP_AUTO_INTERVAL = 15 * 60          # 15 minutes
+_sp_auto_lock = threading.Lock()
+_sp_auto_cfgs: Dict[str, Dict[str, Any]] = {}   # username -> cfg (mirrors enabled configs)
+
+
+def _sp_autocfg_file(username: str) -> str:
+    safe = username.strip().lower().replace(" ", "_").replace("/", "").replace(".", "")
+    return f"/tmp/zyni_sp_autocfg_{safe}.json"
+
+
+def load_sp_autocfg(username: str) -> Optional[Dict[str, Any]]:
+    try:
+        with open(_sp_autocfg_file(username), "r") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_sp_autocfg(username: str, cfg: Dict[str, Any]) -> None:
+    try:
+        with open(_sp_autocfg_file(username), "w") as f:
+            json.dump(cfg, f)
+    except Exception as e:
+        print(f"[SP-AUTO] save cfg error {username}: {e}")
+
+
+def _sp_is_junk(sym: str) -> bool:
+    """Mirror of the client's _spIsJunk: stablecoins + leveraged/token wrappers."""
+    s = (sym or "").upper()
+    if s.endswith(("UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT")):
+        return True
+    if s.startswith(_SP_STABLE_PREFIX):
+        return True
+    if s.endswith("LUSDT") or s.endswith("SUSDT"):
+        core = s[:-5]
+        if core and core[-1].isdigit():   # e.g. BTC3LUSDT / ETH5SUSDT
+            return True
+    return False
+
+
+def compute_movers(exchange: str, market: str, cfg: Dict[str, Any]) -> List[str]:
+    """Top gainers/losers for an exchange per a mover config (server mirror of
+    the client's Load Movers logic). Returns a de-duplicated list of symbols."""
+    pairs = get_pairs_exchange(exchange, market) or []
+    excl_junk = cfg.get("excludeJunk", True)
+    excl_stock = cfg.get("excludeStocks", True)
+    try:
+        min_vol = float(cfg.get("minVol", 0) or 0)
+    except (TypeError, ValueError):
+        min_vol = 0.0
+    pool = []
+    for p in pairs:
+        cp = p.get("changePct")
+        if not isinstance(cp, (int, float)):
+            continue
+        if min_vol and (p.get("quoteVolume") or 0) < min_vol:
+            continue
+        sym = str(p.get("symbol", ""))
+        if excl_junk and _sp_is_junk(sym):
+            continue
+        if excl_stock and "STOCK" in sym.upper():
+            continue
+        pool.append(p)
+    pool.sort(key=lambda x: x.get("changePct", 0), reverse=True)
+    direction = cfg.get("dir", "both")
+    try:
+        n_gain = max(0, int(cfg.get("gainers", 100) or 0))
+        n_lose = max(0, int(cfg.get("losers", 100) or 0))
+    except (TypeError, ValueError):
+        n_gain, n_lose = 100, 100
+    seen, picked = set(), []
+
+    def _add(rows):
+        for p in rows:
+            s = str(p.get("symbol", "")).upper()
+            if s and s not in seen:
+                seen.add(s)
+                picked.append(s)
+
+    if direction in ("both", "gainers"):
+        _add(pool[:n_gain])
+    if direction in ("both", "losers"):
+        _add(pool[max(0, len(pool) - n_lose):])
+    return picked
+
+
+def _sp_run_one(username: str, cfg: Dict[str, Any]) -> int:
+    """Recompute one user's movers and persist them as their watchlist."""
+    syms = compute_movers(cfg.get("exchange", "binance"),
+                          cfg.get("market", "perpetual"), cfg)
+    if not syms:
+        return 0
+    save_user_watchlist(username, syms)
+    with _wl_lock:
+        _wl_user_pairs[username] = syms
+        _wl_rebuild_union()
+    cfg["lastRun"] = int(time.time())
+    cfg["lastCount"] = len(syms)
+    save_sp_autocfg(username, cfg)
+    return len(syms)
+
+
+def _sp_autorefresh_loop():
+    time.sleep(30)   # let the app finish booting
+    while True:
+        try:
+            with _sp_auto_lock:
+                items = [(u, c) for u, c in _sp_auto_cfgs.items() if c and c.get("enabled")]
+            for username, cfg in items:
+                try:
+                    n = _sp_run_one(username, cfg)
+                    print(f"[SP-AUTO] {username}: {n} movers ({cfg.get('exchange')})")
+                except Exception as e:
+                    print(f"[SP-AUTO] {username} error: {e}")
+        except Exception as e:
+            print(f"[SP-AUTO] loop error: {e}")
+        time.sleep(_SP_AUTO_INTERVAL)
+
+
+def _sp_load_autocfgs_at_boot():
+    import glob
+    for path in glob.glob("/tmp/zyni_sp_autocfg_*.json"):
+        try:
+            with open(path, "r") as f:
+                cfg = json.load(f)
+            u = cfg.get("username")
+            if u and cfg.get("enabled"):
+                _sp_auto_cfgs[u] = cfg
+        except Exception:
+            pass
+
+
+_sp_load_autocfgs_at_boot()
+threading.Thread(target=_sp_autorefresh_loop, daemon=True, name="sp-autorefresh").start()
+
+
 def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
                         market: str = "perpetual", exchange: str = "binance") -> List[Dict[str, float]]:
     """Universal get_klines — routes to correct exchange.
@@ -33512,6 +33655,63 @@ def api_live_prices():
             out[s] = {"p": p.get("price"), "c": p.get("changePct"), "v": p.get("quoteVolume")}
     _live_px_cache[key] = (now, out)
     return jsonify(out)
+
+
+@app.route("/api/selected-pairs/autorefresh", methods=["GET", "POST"])
+@login_required
+def api_sp_autorefresh():
+    """Get or set the server-side Selected Pairs movers auto-refresh config."""
+    username = session.get("username", "")
+    if not username:
+        return jsonify({"error": "no_session"}), 401
+
+    if request.method == "GET":
+        cfg = load_sp_autocfg(username) or {}
+        return jsonify({
+            "enabled":       bool(cfg.get("enabled")),
+            "exchange":      cfg.get("exchange"),
+            "market":        cfg.get("market"),
+            "dir":           cfg.get("dir"),
+            "gainers":       cfg.get("gainers"),
+            "losers":        cfg.get("losers"),
+            "minVol":        cfg.get("minVol"),
+            "excludeJunk":   cfg.get("excludeJunk"),
+            "excludeStocks": cfg.get("excludeStocks"),
+            "lastRun":       cfg.get("lastRun"),
+            "lastCount":     cfg.get("lastCount"),
+            "intervalMin":   _SP_AUTO_INTERVAL // 60,
+        })
+
+    data = request.get_json(silent=True) or {}
+    cfg = {
+        "username":      username,
+        "enabled":       bool(data.get("enabled")),
+        "exchange":      str(data.get("exchange", "binance")).lower(),
+        "market":        data.get("market", "perpetual"),
+        "dir":           data.get("dir", "both"),
+        "gainers":       int(data.get("gainers", 100) or 0),
+        "losers":        int(data.get("losers", 100) or 0),
+        "minVol":        float(data.get("minVol", 0) or 0),
+        "excludeJunk":   bool(data.get("excludeJunk", True)),
+        "excludeStocks": bool(data.get("excludeStocks", True)),
+        "updatedAt":     int(time.time()),
+    }
+    save_sp_autocfg(username, cfg)
+    with _sp_auto_lock:
+        if cfg["enabled"]:
+            _sp_auto_cfgs[username] = cfg
+        else:
+            _sp_auto_cfgs.pop(username, None)
+
+    # Run once immediately on enable so the user sees the result without waiting.
+    loaded = 0
+    if cfg["enabled"]:
+        try:
+            loaded = _sp_run_one(username, cfg)
+        except Exception as e:
+            print(f"[SP-AUTO] immediate run error {username}: {e}")
+    return jsonify({"ok": True, "enabled": cfg["enabled"], "loaded": loaded,
+                    "intervalMin": _SP_AUTO_INTERVAL // 60})
 
 
 @app.route("/api/my-permissions")

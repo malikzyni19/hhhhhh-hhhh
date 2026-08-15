@@ -2511,7 +2511,9 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
     ".sp-uf{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-3);font-weight:600}"+
     ".sp-uf input{width:130px;background:var(--bg-input,rgba(255,255,255,.03));color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;outline:none}"+
     ".sp-uf input:focus{border-color:rgba(34,211,238,.5)}"+
-    ".sp-chk{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);cursor:pointer;margin-bottom:14px}"+
+    ".sp-chk{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);cursor:pointer;margin-bottom:10px}"+
+    ".sp-chk-auto{margin-top:2px;padding-top:10px;border-top:1px solid var(--border);flex-wrap:wrap}"+
+    ".sp-auto-hint{color:var(--text-3);font-weight:400;font-size:11px}"+
     ".sp-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}"+
     ".sp-wl{background:var(--bg-input,rgba(255,255,255,.03));color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;outline:none;min-width:150px}"+
     ".sp-note{margin-top:12px;font-size:12px;color:var(--accent);background:rgba(34,211,238,.06);border:1px solid var(--border);border-radius:8px;padding:8px 11px}"+
@@ -3715,7 +3717,28 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
      Builds ST.stars (the "Selected / watchlist" scan scope) from the biggest
      24h movers of the active exchange, so Main Scan with Scope=Selected runs
      across a curated universe instead of the whole market. */
-  var SP_CFG = { dir:"both", gainers:100, losers:100, minVol:0, excludeJunk:true, excludeStocks:true, loading:false, note:"" };
+  var SP_CFG = { dir:"both", gainers:100, losers:100, minVol:0, excludeJunk:true, excludeStocks:true, autoServer:false, loading:false, note:"" };
+  // Persist the Movers settings (not the transient loading/note fields) so they
+  // survive refresh/login instead of resetting to defaults.
+  function _saveSPCfg(){
+    try{ localStorage.setItem("zyni-sp-cfg", JSON.stringify({
+      dir:SP_CFG.dir, gainers:SP_CFG.gainers, losers:SP_CFG.losers, minVol:SP_CFG.minVol,
+      excludeJunk:SP_CFG.excludeJunk, excludeStocks:SP_CFG.excludeStocks, autoServer:SP_CFG.autoServer
+    })); }catch(_){ }
+  }
+  function _loadSPCfg(){
+    try{
+      var c=JSON.parse(localStorage.getItem("zyni-sp-cfg")||"null"); if(!c) return;
+      if(c.dir) SP_CFG.dir=c.dir;
+      if(c.gainers!=null) SP_CFG.gainers=c.gainers;
+      if(c.losers!=null) SP_CFG.losers=c.losers;
+      if(c.minVol!=null) SP_CFG.minVol=c.minVol;
+      if(c.excludeJunk!=null) SP_CFG.excludeJunk=!!c.excludeJunk;
+      if(c.excludeStocks!=null) SP_CFG.excludeStocks=!!c.excludeStocks;
+      if(c.autoServer!=null) SP_CFG.autoServer=!!c.autoServer;
+    }catch(_){ }
+  }
+  _loadSPCfg();
   var SP_LAST_PX = {};   // symbol -> snapshot price captured at load (seeds the list before live ticks)
   var SP_LAST_VOL = {};  // symbol -> snapshot 24h quote volume captured at load
   /* Live-price engine state. Prices/24h% stream straight from each exchange's
@@ -3790,6 +3813,7 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
           '</div>'+
           '<label class="sp-chk"><input id="spExclJunk" type="checkbox"'+(SP_CFG.excludeJunk?" checked":"")+'> Exclude stablecoins &amp; leveraged tokens</label>'+
           '<label class="sp-chk"><input id="spExclStocks" type="checkbox"'+(SP_CFG.excludeStocks?" checked":"")+'> Exclude stock pairs</label>'+
+          '<label class="sp-chk sp-chk-auto"><input id="spAutoServer" type="checkbox"'+(SP_CFG.autoServer?" checked":"")+'> Auto-refresh on server every 15 min <span class="sp-auto-hint">(keeps running even when this browser is closed)</span></label>'+
           '<div class="sp-actions">'+
             '<button class="btn btn-primary" id="spLoadBtn" type="button">'+(SP_CFG.loading?"Loading…":"⚡ Load Movers")+'</button>'+
             '<button class="btn" id="spScanBtn" type="button" title="Switch to Main Scan and scan these pairs">Scan in Main Scan</button>'+
@@ -3811,11 +3835,15 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
       b.classList.toggle('on', b.getAttribute('data-dir')===SP_CFG.dir);
       b.addEventListener('click',function(){ SP_CFG.dir=b.getAttribute('data-dir'); _spReadInputs(); renderSelectedPairs(); });
     });
-    var g=E("spGainers"), l=E("spLosers"), v=E("spMinVol"), x=E("spExclJunk"), xs=E("spExclStocks");
+    var g=E("spGainers"), l=E("spLosers"), v=E("spMinVol"), x=E("spExclJunk"), xs=E("spExclStocks"), au=E("spAutoServer");
     if(g) g.addEventListener('change',_spReadInputs);
     if(l) l.addEventListener('change',_spReadInputs);
     if(v) v.addEventListener('change',_spReadInputs);
     if(x) x.addEventListener('change',_spReadInputs);
+    if(au) au.addEventListener('change',function(){
+      SP_CFG.autoServer=!!au.checked; _saveSPCfg(); _spPushAutoCfg(true);
+      if(SP_CFG.autoServer) _spLoadMovers();   // sync the on-screen universe to the fresh movers
+    });
     if(xs) xs.addEventListener('change',_spReadInputs);
     if(E("spLoadBtn"))  E("spLoadBtn").addEventListener('click', _spLoadMovers);
     if(E("spScanBtn"))  E("spScanBtn").addEventListener('click', _spScanInMain);
@@ -3842,6 +3870,31 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
     if(v) SP_CFG.minVol  = Math.max(0, parseFloat(v.value)||0);
     if(x) SP_CFG.excludeJunk = !!x.checked;
     if(xs) SP_CFG.excludeStocks = !!xs.checked;
+    _saveSPCfg();
+    if(SP_CFG.autoServer) _spPushAutoCfg(false);   // keep the server job's config in sync
+  }
+  /* Server-side auto-refresh config sync. POST current settings; when enabling,
+     the server also runs it once immediately and returns how many it loaded. */
+  function _spPushAutoCfg(reflect){
+    var body={ enabled:SP_CFG.autoServer, exchange:ST.exchange, market:ST.market,
+      dir:SP_CFG.dir, gainers:SP_CFG.gainers, losers:SP_CFG.losers, minVol:SP_CFG.minVol,
+      excludeJunk:SP_CFG.excludeJunk, excludeStocks:SP_CFG.excludeStocks };
+    return fetch("/api/selected-pairs/autorefresh",{method:"POST",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)})
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){
+        if(!reflect) return;
+        if(d && d.enabled){ SP_CFG.note="Server auto-refresh ON — every "+(d.intervalMin||15)+" min, even when this browser is closed"+(d.loaded?(" ("+d.loaded+" loaded now)"):"")+"."; }
+        else { SP_CFG.note="Server auto-refresh off."; }
+        if(ST.mode==="selected") renderSelectedPairs();
+      })
+      .catch(function(){ if(reflect){ SP_CFG.note="Couldn't reach server for auto-refresh."; if(ST.mode==="selected") renderSelectedPairs(); } });
+  }
+  function _spLoadAutoCfg(){   // restore checkbox state on page load
+    fetch("/api/selected-pairs/autorefresh",{credentials:"same-origin"})
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){ if(d){ SP_CFG.autoServer=!!d.enabled; if(ST.mode==="selected") renderSelectedPairs(); } })
+      .catch(function(){});
   }
   function _spLoadMovers(){
     _spReadInputs();
@@ -6370,6 +6423,8 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
       }
       ST.exchange=v; el.value=v;
       _ls_set("zyni-exchange", v);
+      // Keep the server auto-refresh pointed at the newly chosen exchange.
+      if(typeof SP_CFG!=="undefined" && SP_CFG.autoServer && typeof _spPushAutoCfg==="function") _spPushAutoCfg(false);
       _markStale();
       renderAll();
     });
@@ -20255,6 +20310,7 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
   } else {
     loadWatchlist();            // normal load/refresh → restore the persisted set
   }
+  try{ _spLoadAutoCfg(); }catch(_){ }   // restore the server auto-refresh checkbox state
   loadLiveMonitorItems();       // Phase 1: pre-load DB-backed Live Monitor items
   loadLiveMonitorAiProviders(); // Phase 6.5: pre-load AI provider list
   loadTokens();                 // load token counter without triggering a scan
