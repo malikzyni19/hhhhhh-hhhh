@@ -6902,6 +6902,9 @@ def _complete_login(username: str, db_user, ip: str, ua: str,
     session.permanent    = remember_me
     session["logged_in"] = True
     session["username"]  = username
+    # One-shot flag: the desktop Selected Pairs tab auto-loads movers once after
+    # a real login (consumed + cleared when the scanner page renders).
+    session["just_logged_in"] = True
 
     if db_user is not None:
         try:
@@ -33363,7 +33366,11 @@ def index():
             mobile = _detect_mobile(request)
 
     tmpl = "index.html" if mobile else "preview.html"
-    resp = make_response(render_template(tmpl, username=display_name))
+    # One-shot: true only on the first page render after a real login. Desktop
+    # uses it to auto-load the Selected Pairs movers; mobile ignores it.
+    just_logged_in = bool(session.pop("just_logged_in", False))
+    resp = make_response(render_template(tmpl, username=display_name,
+                                         just_logged_in=just_logged_in))
     if set_cookie_to:
         resp.set_cookie(
             _VIEW_COOKIE, set_cookie_to,
@@ -33378,7 +33385,9 @@ def preview():
     if session.get("logged_in"):
         username = session.get("username", "Trader")
         display_name = " ".join(w.capitalize() for w in username.strip().split())
-        return render_template("preview.html", username=display_name)
+        just_logged_in = bool(session.pop("just_logged_in", False))
+        return render_template("preview.html", username=display_name,
+                               just_logged_in=just_logged_in)
     return redirect(url_for("index"))
 
 
