@@ -317,8 +317,10 @@ def resolve_scope_symbols(settings) -> list:
             user = User.query.filter_by(id=settings.user_id).first()
             if not user:
                 return []
+            # The full Selected Pairs universe, not the 10-pair live-price
+            # watchlist — those are different lists with different limits.
             return [str(p).strip().upper()
-                    for p in (_m.load_user_watchlist(user.username) or [])
+                    for p in (_m.load_user_selected_pairs(user.username) or [])
                     if str(p).strip()]
         except Exception as exc:
             print(f"[SIG] selected-pairs lookup failed: {str(exc)[:100]}")

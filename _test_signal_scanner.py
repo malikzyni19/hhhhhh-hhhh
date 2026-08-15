@@ -179,7 +179,7 @@ with main.app.app_context():
     db.session.commit()
 
 with patch("live_monitor.signal_scanner.run_one_scan", side_effect=_capture_symbols), \
-     patch.object(main, "load_user_watchlist", return_value=["MYPAIRUSDT"]):
+     patch.object(main, "load_user_selected_pairs", return_value=["MYPAIRUSDT"]):
     with main.app.app_context():
         res = run_scan_cycle(force_kind="scan")
 

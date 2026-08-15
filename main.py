@@ -318,6 +318,49 @@ def save_user_watchlist(username: str, pairs: List[str]) -> None:
     except Exception as e:
         print(f"[WL-SAVE] Error for {username}: {e}")
 
+
+# ── Selected Pairs universe (full list) ──────────────────────────────────────
+# The watchlist above is capped at 10 because every pair in it gets a live
+# websocket price subscription. The Selected Pairs tab is a different thing:
+# a scan universe that can be hundreds of pairs and needs no live prices.
+# Storing it separately lets signal scanning use the whole universe without
+# putting hundreds of symbols on the live-price feed.
+
+_SELECTED_PAIRS_MAX = 500
+
+
+def _sel_pairs_file(username: str) -> str:
+    safe = username.strip().lower().replace(" ", "_").replace("/", "").replace(".", "")
+    return f"/tmp/zyni_selpairs_{safe}.json"
+
+
+def load_user_selected_pairs(username: str) -> List[str]:
+    """The user's full Selected Pairs universe.
+
+    Falls back to the 10-pair watchlist for accounts that have not re-synced
+    since this store was added, so the feature works immediately rather than
+    appearing empty until the user touches the Scanner again.
+    """
+    try:
+        with open(_sel_pairs_file(username), "r") as f:
+            data = json.load(f)
+            out = [str(p).strip().upper() for p in data if str(p).strip()]
+            if out:
+                return out
+    except Exception:
+        pass
+    return load_user_watchlist(username)
+
+
+def save_user_selected_pairs(username: str, pairs: List[str]) -> None:
+    try:
+        clean = [str(p).strip().upper() for p in pairs if str(p).strip()]
+        clean = [p for p in clean if p.endswith("USDT")][:_SELECTED_PAIRS_MAX]
+        with open(_sel_pairs_file(username), "w") as f:
+            json.dump(clean, f)
+    except Exception as e:
+        print(f"[SELPAIRS-SAVE] Error for {username}: {e}")
+
 # ============================================================
 # EMAIL CONFIG — Login Notifications
 # Set these in Koyeb environment variables:
@@ -8056,6 +8099,12 @@ def api_watchlist_register():
     username = session.get("username", "default")
     data  = request.get_json(force=True) or {}
     pairs = [str(p).strip().upper() for p in data.get("pairs", []) if str(p).strip()]
+
+    # Keep the FULL Selected Pairs universe before trimming. The trim below is
+    # a live-price-feed limit, not a limit on how many pairs the user may
+    # select — signal scanning needs the whole universe.
+    save_user_selected_pairs(username, pairs)
+
     pairs = [p for p in pairs if p.endswith("USDT")][:10]  # max 10 for Nano
 
     # Save to server permanently
