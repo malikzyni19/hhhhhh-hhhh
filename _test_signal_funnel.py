@@ -162,6 +162,24 @@ with main.app.app_context():
     check("3-5 empty input is a safe no-op",
           record_candidates([])["inserted"] == 0)
 
+    # Regression: a single scan can contain the same setup twice, because the
+    # round-robin pair picker wraps and repeats symbols whenever the pair list
+    # is shorter than the batch size. Two identical keys in one INSERT batch
+    # used to trip the unique constraint and lose the ENTIRE batch.
+    dupe_batch = (adapt_bias({"symbol": "TWICEUSDT", "timeframe": "4h",
+                              "bias": "bullish", "score": 70}, now=NOW) +
+                  adapt_bias({"symbol": "TWICEUSDT", "timeframe": "4h",
+                              "bias": "bullish", "score": 70}, now=NOW) +
+                  adapt_bias({"symbol": "SURVIVEUSDT", "timeframe": "4h",
+                              "bias": "bearish", "score": 65}, now=NOW))
+    r3 = record_candidates(dupe_batch)
+    check("3-5b a repeated setup inside one batch does not lose the batch",
+          r3["inserted"] == 2, r3)
+    check("3-5c the repeat is folded into one row",
+          C.query.filter_by(symbol="TWICEUSDT").count() == 1)
+    check("3-5d the other candidate in the batch still survived",
+          C.query.filter_by(symbol="SURVIVEUSDT").count() == 1)
+
     # Expiry sweep
     old = adapt_bias({"symbol": "OLDUSDT", "timeframe": "5m", "bias": "bearish"},
                      now=NOW - timedelta(days=2))

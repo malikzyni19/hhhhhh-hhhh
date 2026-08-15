@@ -105,6 +105,15 @@ from live_monitor.signal_outcome import (
     track_open_alerts_for_all,
     module_accuracy,
 )
+from live_monitor.signal_scanner import (
+    run_scan_cycle,
+    run_one_scan,
+    run_all_scans_once,
+    scanner_loop,
+    scanner_state,
+    scanner_enabled,
+    SCAN_SEQUENCE,
+)
 from live_monitor.smc_orderflow_fusion import _lm_build_smc_orderflow_fusion
 from live_monitor.ai_execution_context import _lm_build_ai_execution_context
 from live_monitor.ai_trade_control import _lm_build_ai_trade_control_decision
@@ -366,4 +375,12 @@ __all__ = [
     "track_open_alerts",
     "track_open_alerts_for_all",
     "module_accuracy",
+    # Phase SIG-8: background scanning
+    "run_scan_cycle",
+    "run_one_scan",
+    "run_all_scans_once",
+    "scanner_loop",
+    "scanner_state",
+    "scanner_enabled",
+    "SCAN_SEQUENCE",
 ]

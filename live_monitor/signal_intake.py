@@ -394,8 +394,23 @@ def record_candidates(candidates: list) -> dict:
         print(f"[SIG-2] candidate preload failed: {str(exc)[:120]}")
         existing = {}
 
+    # A single scan can legitimately contain the same setup twice — the
+    # round-robin pair selection wraps and repeats symbols whenever the pair
+    # list is shorter than the batch size. Without folding those together
+    # here, two identical keys reach the same INSERT batch, the unique
+    # constraint fires, and the whole batch is lost rather than one row.
+    pending: dict = {}
+
     for c in candidates:
         try:
+            dupe = pending.get(c["candidate_key"])
+            if dupe is not None:
+                dupe.score          = c["score"]
+                dupe.detected_price = c["detected_price"]
+                dupe.last_seen_at   = c["detected_at"]
+                refreshed += 1
+                continue
+
             row = existing.get(c["candidate_key"])
             if row is not None:
                 # Same setup, same candle — refresh liveness and let the score
@@ -407,7 +422,9 @@ def record_candidates(candidates: list) -> dict:
                     row.status = "active"
                 refreshed += 1
             else:
-                db.session.add(_C(status="active", last_seen_at=c["detected_at"], **c))
+                new_row = _C(status="active", last_seen_at=c["detected_at"], **c)
+                db.session.add(new_row)
+                pending[c["candidate_key"]] = new_row
                 inserted += 1
         except Exception as exc:
             errors += 1

@@ -26480,6 +26480,13 @@ from live_monitor import (
     track_open_alerts,
     track_open_alerts_for_all,
     module_accuracy,
+    run_scan_cycle,
+    run_one_scan,
+    run_all_scans_once,
+    scanner_loop,
+    scanner_state,
+    scanner_enabled,
+    SCAN_SEQUENCE,
     send_telegram_message,
     test_telegram_connection,
     escape_html,
@@ -31433,6 +31440,80 @@ if _lm_signal_promotion_enabled():
     _ensure_lm_signal_promotion()
 else:
     print("[SIG-3] promotion scheduler DISABLED (ZYNI_SIG_PROMOTION_ENABLED not truthy)")
+
+
+# ── Phase SIG-8: background scanner ──────────────────────────────────────────
+# Runs the scan tabs server-side on a timer. Without this the funnel only ever
+# saw setups when a browser pressed a scan button, so a closed browser meant
+# no signals at all.
+
+_lm_sig_scan_thread = None
+
+
+def _ensure_lm_signal_scanner():
+    global _lm_sig_scan_thread
+    if _lm_sig_scan_thread and _lm_sig_scan_thread.is_alive():
+        return
+    _lm_sig_scan_thread = threading.Thread(
+        target=scanner_loop, daemon=True, name="lm-signal-scan")
+    _lm_sig_scan_thread.start()
+
+
+if scanner_enabled():
+    _ensure_lm_signal_scanner()
+else:
+    print("[SIG-8] background scanner DISABLED (ZYNI_SIG_SCAN_ENABLED not truthy)")
+
+
+@app.route("/api/live-monitor/signal-scan/run", methods=["POST"])
+@login_required
+def api_lm_signal_scan_run():
+    """POST: Scan right now instead of waiting for the next cycle.
+
+    Body may name one scan type ({"kind": "bias"}); with none given every scan
+    type runs, which is heavier but returns results immediately.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+    body = request.get_json(force=True, silent=True) or {}
+    kind = (body.get("kind") or "").strip().lower() or None
+    try:
+        if kind:
+            if kind not in SCAN_SEQUENCE:
+                return jsonify({"ok": False, "error": "unknown_scan_type",
+                                "allowed": list(SCAN_SEQUENCE)}), 400
+            return jsonify({"ok": True, "result": run_one_scan(kind)})
+        return jsonify(run_all_scans_once())
+    except Exception as exc:
+        print(f"[SIG-8] manual scan failed user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "scan_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-scan/status", methods=["GET"])
+@login_required
+def api_lm_signal_scan_status():
+    """GET: Is the background scanner running, and what did it last do?
+
+    The first thing to check when signals are not appearing.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+    try:
+        from models import LiveMonitorSignalCandidate as _C
+        state = scanner_state()
+        state["thread_alive"] = bool(_lm_sig_scan_thread
+                                     and _lm_sig_scan_thread.is_alive())
+        try:
+            state["candidates_stored"] = _C.query.filter_by(status="active").count()
+        except Exception:
+            state["candidates_stored"] = None
+        return jsonify({"ok": True, "scanner": state})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "status_unavailable",
+                        "message": str(exc)[:160]}), 500
 
 
 @app.route("/api/live-monitor/signal-promotion/run", methods=["POST"])

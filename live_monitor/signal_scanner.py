@@ -1,0 +1,252 @@
+"""Phase SIG-8: Background scanning — the funnel finds setups on its own.
+
+Every scan in this app lives behind a button. That was fine when a human was
+always the one asking, but a signal service cannot depend on someone having
+the site open: with the browser closed nothing was ever scanned, so nothing
+was ever found, so nothing was ever sent.
+
+This runs the same scans on a timer, server-side, with no browser involved.
+
+It deliberately calls the app's own scan endpoints rather than reimplementing
+their logic. Those endpoints are hundreds of lines each and already carry the
+intake hooks; duplicating them would guarantee the copy drifts out of step
+with the real scanners the moment either changes.
+
+Load is spread by rotating: one scan type per cycle, each sweeping the market
+in batches. Scanning everything every cycle would multiply both exchange API
+weight and database traffic for no benefit — a 4-hour setup does not need
+checking every minute.
+"""
+from __future__ import annotations
+
+import os
+import threading
+import time
+from datetime import datetime, timezone
+
+import main as _m
+
+
+# One scan type per cycle, in this order, looping. With the default 15-minute
+# cycle each type runs roughly every 75 minutes.
+SCAN_SEQUENCE = ["scan", "compressed", "bias", "ath_atl", "trending"]
+
+_state_lock = threading.Lock()
+_state = {"index": 0, "cycles": 0, "last_run": None, "last_result": None,
+          "last_error": None, "running": False}
+
+
+def scanner_enabled() -> bool:
+    return (os.environ.get("ZYNI_SIG_SCAN_ENABLED", "1") or "").strip().lower() \
+        in ("1", "true", "yes", "on")
+
+
+def cycle_seconds() -> int:
+    try:
+        return max(120, min(3600, int(os.environ.get("ZYNI_SIG_SCAN_CYCLE_SEC", "900"))))
+    except (TypeError, ValueError):
+        return 900
+
+
+def pairs_per_cycle() -> int:
+    """Pairs swept per scan. The main lever on exchange API weight."""
+    try:
+        return max(5, min(120, int(os.environ.get("ZYNI_SIG_SCAN_PAIRS", "30"))))
+    except (TypeError, ValueError):
+        return 30
+
+
+def scan_exchange() -> str:
+    return (os.environ.get("ZYNI_SIG_SCAN_EXCHANGE", "binance") or "binance").lower()
+
+
+def scan_market() -> str:
+    return (os.environ.get("ZYNI_SIG_SCAN_MARKET", "perpetual") or "perpetual").lower()
+
+
+def _payload_for(kind: str) -> tuple:
+    """(url, json_body) for one scan type.
+
+    Defaults mirror what the tabs send, with market mode + round robin so each
+    run continues where the last left off and the whole market is covered over
+    time rather than re-scanning the same handful of pairs.
+    """
+    ex, mkt, n = scan_exchange(), scan_market(), pairs_per_cycle()
+
+    if kind == "scan":
+        return "/api/scan", {
+            "scanMode": "market", "roundRobin": True,
+            "pairsPerCycle": n, "exchange": ex, "market": mkt,
+            "settings": {},
+        }
+    if kind == "compressed":
+        return "/api/compressed_scan", {
+            "timeframe": "1h", "exchange": ex, "market": mkt,
+            "lookback": 12, "maxPct": 2.0,
+        }
+    if kind == "bias":
+        return "/api/bias_scan", {
+            "timeframe": "1d", "exchange": ex, "market": mkt,
+            "scanMode": "market", "pairsPerCycle": n, "roundRobin": True,
+        }
+    if kind == "ath_atl":
+        return "/api/ath_atl_scan", {
+            "action": "scan", "mode": "both", "status": "breaking_now",
+            "exchange": ex, "market": mkt, "windowHours": 24,
+            "pairsPerBatch": n,
+        }
+    if kind == "trending":
+        return "/api/trending_scan", {
+            "timeframe": "1h", "mode": "movers", "limit": 30,
+            "exchange": ex, "market": mkt,
+        }
+    return None, None
+
+
+def _scan_runner_identity():
+    """Which account the background scans run as.
+
+    Prefers an admin, because the scan endpoints skip the daily token charge
+    for admins — a scan the user never asked for should not spend their quota.
+    Falls back to any user with the signal engine on.
+    """
+    from models import User, LiveMonitorSignalSettings as _S
+
+    try:
+        # This runs from a background thread, which carries no app context of
+        # its own. Flask allows nesting, so pushing one here is safe whether
+        # the caller already had one or not.
+        with _m.app.app_context():
+            enabled_ids = [r.user_id for r in
+                           _S.query.filter(_S.enabled.is_(True)).all()]
+            if not enabled_ids:
+                return None
+
+            # is_admin is a Python property over `role`, not a column, so the
+            # admin preference is expressed against role directly.
+            admin = (User.query
+                     .filter(User.id.in_(enabled_ids), User.role == "admin")
+                     .order_by(User.id.asc()).first())
+            if admin:
+                return {"id": admin.id, "username": admin.username, "admin": True}
+
+            first = (User.query.filter(User.id.in_(enabled_ids))
+                     .order_by(User.id.asc()).first())
+            if first:
+                return {"id": first.id, "username": first.username,
+                        "admin": bool(getattr(first, "is_admin", False))}
+    except Exception as exc:
+        print(f"[SIG-8] identity lookup failed: {str(exc)[:100]}")
+    return None
+
+
+def run_one_scan(kind: str, identity: dict = None, timeout_note: str = None) -> dict:
+    """Run one scan type as if a browser had pressed its button.
+
+    Returns {ok, kind, status, elapsed_sec}. Never raises — a failing scan
+    must not take the loop down with it.
+    """
+    identity = identity or _scan_runner_identity()
+    if not identity:
+        return {"ok": False, "kind": kind, "reason": "no_enabled_user"}
+
+    url, body = _payload_for(kind)
+    if url is None:
+        return {"ok": False, "kind": kind, "reason": "unknown_scan_type"}
+
+    started = time.time()
+    try:
+        client = _m.app.test_client()
+        with client.session_transaction() as sess:
+            sess["logged_in"] = True
+            sess["username"]  = identity["username"]
+        resp = client.post(url, json=body)
+        elapsed = round(time.time() - started, 1)
+
+        ok = resp.status_code == 200
+        out = {"ok": ok, "kind": kind, "status": resp.status_code,
+               "elapsed_sec": elapsed, "as_user": identity["username"]}
+        if not ok:
+            try:
+                out["error"] = str(resp.get_json())[:200]
+            except Exception:
+                out["error"] = f"http_{resp.status_code}"
+        return out
+    except Exception as exc:
+        return {"ok": False, "kind": kind, "reason": f"crashed:{str(exc)[:120]}",
+                "elapsed_sec": round(time.time() - started, 1)}
+
+
+def run_scan_cycle(force_kind: str = None) -> dict:
+    """One cycle: run the next scan type in the rotation."""
+    identity = _scan_runner_identity()
+    if not identity:
+        # Nobody has the engine on, so there is nothing to scan for.
+        return {"ok": True, "skipped": "no_enabled_user"}
+
+    with _state_lock:
+        kind = force_kind or SCAN_SEQUENCE[_state["index"] % len(SCAN_SEQUENCE)]
+        if not force_kind:
+            _state["index"] = (_state["index"] + 1) % len(SCAN_SEQUENCE)
+
+    result = run_one_scan(kind, identity=identity)
+
+    with _state_lock:
+        _state["cycles"]     += 1
+        _state["last_run"]    = datetime.now(timezone.utc).isoformat()
+        _state["last_result"] = result
+        _state["last_error"]  = None if result.get("ok") else result
+
+    return result
+
+
+def run_all_scans_once() -> dict:
+    """Run every scan type back to back. For a manual 'scan now'.
+
+    Heavier than a normal cycle by design — this is what someone presses when
+    they want results immediately rather than waiting for the rotation.
+    """
+    out = {}
+    for kind in SCAN_SEQUENCE:
+        out[kind] = run_one_scan(kind)
+    return {"ok": True, "scans": out}
+
+
+def scanner_state() -> dict:
+    with _state_lock:
+        return dict(_state, sequence=list(SCAN_SEQUENCE),
+                    cycle_sec=cycle_seconds(), pairs=pairs_per_cycle())
+
+
+def scanner_loop():
+    """Background loop. Sleeps first so startup is not a thundering herd."""
+    cycle = cycle_seconds()
+    print(f"[SIG-8] background scanner started cycle={cycle}s "
+          f"pairs={pairs_per_cycle()} sequence={'>'.join(SCAN_SEQUENCE)}")
+
+    with _state_lock:
+        _state["running"] = True
+
+    # A short initial delay lets the app finish booting (WS threads, caches)
+    # before the first scan competes with it for the exchange rate limit.
+    time.sleep(45)
+
+    while True:
+        started = time.time()
+        try:
+            result = run_scan_cycle()
+            if result.get("skipped"):
+                # Nothing to do — check again next cycle without noise.
+                pass
+            elif result.get("ok"):
+                print(f"[SIG-8] scanned {result['kind']} "
+                      f"in {result.get('elapsed_sec')}s")
+            else:
+                print(f"[SIG-8] scan {result.get('kind')} failed: "
+                      f"{result.get('error') or result.get('reason')}")
+        except Exception as exc:
+            with _state_lock:
+                _state["last_error"] = str(exc)[:200]
+            print(f"[SIG-8] scan cycle error: {exc}")
+
+        time.sleep(max(30.0, cycle - (time.time() - started)))
