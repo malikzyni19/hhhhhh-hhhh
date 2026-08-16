@@ -26812,6 +26812,7 @@ from live_monitor import (
     serialize_signal_settings,
     apply_signal_settings_update,
     signal_module_catalog,
+    refresh_universe_for_user,
     normalize_scan_results,
     record_candidates,
     expire_stale_candidates,
@@ -31688,6 +31689,78 @@ def api_lm_signal_telegram_link():
             pass
         print(f"[SIG-1] telegram link error user={uid}: {exc}")
         return jsonify({"ok": False, "error": "telegram_link_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-settings/pairs/load", methods=["POST"])
+@login_required
+def api_lm_signal_pairs_load():
+    """POST: Build this user's pair list here, without visiting the Scanner.
+
+    The Scanner keeps its pair list in the browser and only pushes it to the
+    server when it is touched. On a device that has not opened it, the server
+    has nothing — and the settings page could only say so and leave the user
+    stuck. This builds the same list with the same rules, server-side.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        from models import User as _Upl
+        user = _Upl.query.filter_by(id=uid).first()
+        if not user:
+            return jsonify({"ok": False, "error": "no_user"}), 401
+
+        direction = str(body.get("direction") or "both").lower()
+        if direction not in ("both", "gainers", "losers"):
+            direction = "both"
+        # `or` would turn a deliberate 0 into the default — "no losers" is a
+        # real choice and must survive.
+        def _count(key, default):
+            val = body.get(key)
+            if val is None or val == "":
+                val = default
+            try:
+                return max(0, min(400, int(val)))
+            except (TypeError, ValueError):
+                return default
+
+        gainers = _count("gainers", 100)
+        losers  = _count("losers", 100)
+        if gainers == 0 and losers == 0:
+            return jsonify({"ok": False, "error": "nothing_requested",
+                            "message": "Ask for at least one gainer or loser."}), 400
+
+        # Recorded as movers-built so the background scanner keeps it fresh
+        # with these same numbers rather than a server default.
+        save_user_universe_config(user.username, {
+            "source": "movers",
+            "cfg": {"dir": direction, "gainers": gainers, "losers": losers,
+                    "minVol": max(0, float(body.get("minVol") or 0)),
+                    "excludeJunk": True, "excludeStocks": True,
+                    "exchange": (body.get("exchange") or "binance"),
+                    "market":   (body.get("market") or "perpetual")},
+        })
+
+        result = refresh_universe_for_user(user.username)
+        # Success is whether the REBUILD worked, not whether pairs exist —
+        # a previous list survives a failed build, so reading the stored list
+        # would report success for a build that did nothing.
+        if not result.get("ok"):
+            return jsonify({"ok": False, "error": "no_pairs_built",
+                            "message": ("Could not reach the exchange just now. "
+                                        "Your previous pairs are unchanged."),
+                            "detail": result}), 502
+
+        pairs = load_user_selected_pairs(user.username) or []
+
+        return jsonify({"ok": True, "count": len(pairs),
+                        "pairs": pairs[:400], "result": result})
+    except Exception as exc:
+        print(f"[SIG] pair load failed user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "pair_load_failed",
                         "message": str(exc)[:160]}), 500
 
 

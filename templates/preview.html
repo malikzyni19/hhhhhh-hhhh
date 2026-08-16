@@ -7111,6 +7111,33 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
                       '<input id="lmSigScopeLimit" type="number" min="10" max="500" step="10" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
                     '</div>'+
                     '<div id="lmSigSelectedPairs" style="display:none;margin-top:7px;padding:7px 9px;background:var(--bg-3,#1e293b);border-radius:4px"></div>'+
+                    '<div id="lmSigPairLoader" style="display:none;margin-top:7px;padding:8px 10px;background:var(--bg-3,#1e293b);border-radius:4px">'+
+                      '<div style="font-size:10px;color:var(--text-2);margin-bottom:6px">Build the list here — same rules as the Selected Pairs tab, no need to open it.</div>'+
+                      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px 8px">'+
+                        '<div>'+
+                          '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Direction</label>'+
+                          '<select id="lmSigPairDir" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                            '<option value="both">Gainers + losers</option>'+
+                            '<option value="gainers">Gainers only</option>'+
+                            '<option value="losers">Losers only</option>'+
+                          '</select>'+
+                        '</div>'+
+                        '<div>'+
+                          '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Top gainers</label>'+
+                          '<input id="lmSigPairGainers" type="number" min="0" max="400" step="10" value="100" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                        '</div>'+
+                        '<div>'+
+                          '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Top losers</label>'+
+                          '<input id="lmSigPairLosers" type="number" min="0" max="400" step="10" value="100" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                        '</div>'+
+                        '<div>'+
+                          '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Min 24h volume ($)</label>'+
+                          '<input id="lmSigPairMinVol" type="number" min="0" step="1000000" value="0" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                        '</div>'+
+                      '</div>'+
+                      '<button class="btn lm-sm-btn" style="color:var(--green,#4ade80);margin-top:7px" onclick="window._lmSigLoadPairs()">Load pairs now</button>'+
+                      '<span id="lmSigPairMsg" style="font-size:10px;margin-left:8px"></span>'+
+                    '</div>'+
                     '<div id="lmSigSymbolsWrap" style="display:none;margin-top:7px">'+
                       '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Your pairs (comma or space separated)</label>'+
                       '<textarea id="lmSigSymbols" rows="2" placeholder="BTCUSDT ETHUSDT SOLUSDT" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%;resize:vertical;font-family:var(--mono)"></textarea>'+
@@ -11284,6 +11311,8 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
     function _syncScopeUI(scope){
       var lim = $('lmSigScopeLimitWrap'), sym = $('lmSigSymbolsWrap');
       var sel = $('lmSigSelectedPairs');
+      var loader = $('lmSigPairLoader');
+      if(loader) loader.style.display = (scope==='selected_pairs') ? '' : 'none';
       if(lim) lim.style.display = (scope==='top_volume')     ? '' : 'none';
       if(sym) sym.style.display = (scope==='watchlist')      ? '' : 'none';
       if(sel) sel.style.display = (scope==='selected_pairs') ? '' : 'none';
@@ -11530,6 +11559,30 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
                d.ok?null:'err');
         })
         .catch(function(e){ _msg(out,'Could not disconnect: '+e,'err'); });
+    };
+
+    /* ── Building the pair list without leaving this page ─────────────── */
+    window._lmSigLoadPairs = function(){
+      var out = $('lmSigPairMsg');
+      _msg(out, 'Loading pairs…');
+      fetch('/api/live-monitor/signal-settings/pairs/load',{
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          direction: ($('lmSigPairDir')||{}).value || 'both',
+          gainers:   Number((($('lmSigPairGainers')||{}).value) || 0),
+          losers:    Number((($('lmSigPairLosers')||{}).value) || 0),
+          minVol:    Number((($('lmSigPairMinVol')||{}).value) || 0)
+        })
+      })
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if(!d || !d.ok){ _msg(out, (d && d.message) || 'Could not load pairs.', 'err'); return; }
+          _msg(out, 'Loaded '+d.count+' pair'+(d.count===1?'':'s')+'.', 'ok');
+          /* Re-read settings so the list above shows what was just built. */
+          window._lmSigLoadSettings();
+        })
+        .catch(function(e){ _msg(out, 'Could not load pairs: '+e, 'err'); });
     };
 
     /* ── Engine status + manual triggers ──────────────────────────────── */

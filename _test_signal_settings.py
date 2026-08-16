@@ -535,6 +535,73 @@ with main.app.app_context():
           _mm9.load_user_selected_pairs("nobody_at_all") == [],
           _mm9.load_user_selected_pairs("nobody_at_all"))
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 10 — building the pair list without opening the Scanner")
+# ══════════════════════════════════════════════════════════════════════════════
+# The Scanner keeps its pair list in the browser and only pushes it to the
+# server when it is touched. On a device that has never opened it, the server
+# has nothing — and the settings page could only report that and leave the
+# user stuck with no way forward.
+
+import main as _mm10                                                  # noqa: E402
+from unittest.mock import patch as _p10                               # noqa: E402
+
+_MKT10 = ([{"symbol": f"UP{i}USDT", "changePct": 50.0 - i,
+            "quoteVolume": 10_000_000, "price": 1.0} for i in range(10)] +
+          [{"symbol": f"DN{i}USDT", "changePct": -50.0 + i,
+            "quoteVolume": 10_000_000, "price": 1.0} for i in range(10)])
+
+with _p10.object(_mm10, "get_pairs_exchange", return_value=_MKT10):
+    r = client.post("/api/live-monitor/signal-settings/pairs/load",
+                    json={"direction": "gainers", "gainers": 4, "losers": 0})
+check("10-1 pairs can be built from the settings page", r.status_code == 200,
+      r.get_json())
+d = r.get_json() or {}
+check("10-2 exactly the requested count", d.get("count") == 4, d.get("count"))
+check("10-3 gainers only, as asked",
+      all(x.startswith("UP") for x in (d.get("pairs") or [])), d.get("pairs"))
+
+with main.app.app_context():
+    stored = _mm10.load_user_selected_pairs("siguser")
+check("10-4 the list is stored for the scanner to use", len(stored) == 4, stored)
+
+with main.app.app_context():
+    cfg10 = _mm10.load_user_universe_config("siguser")
+check("10-5 recorded as movers-built so it keeps refreshing itself",
+      cfg10.get("source") == "movers", cfg10)
+check("10-6 with the settings just used, not a server default",
+      (cfg10.get("cfg") or {}).get("gainers") == 4, cfg10)
+
+# The settings page only resolves the pair list when that scope is active.
+client.post("/api/live-monitor/signal-settings",
+            json={"coin_scope": "selected_pairs"})
+st10 = client.get("/api/live-monitor/signal-settings").get_json()["settings"]
+check("10-7 the settings page now shows those pairs",
+      len(st10.get("scope_symbols") or []) == 4, st10.get("scope_symbols"))
+
+r = client.post("/api/live-monitor/signal-settings/pairs/load",
+                json={"gainers": 0, "losers": 0})
+check("10-8 asking for nothing is refused with a reason",
+      r.status_code == 400 and "at least one" in ((r.get_json() or {}).get("message") or ""),
+      r.get_json())
+
+# An unreachable exchange must say so plainly rather than wiping the list.
+with _p10.object(_mm10, "get_pairs_exchange", return_value=[]):
+    r = client.post("/api/live-monitor/signal-settings/pairs/load",
+                    json={"direction": "both", "gainers": 5, "losers": 5})
+check("10-9 an unreachable exchange reports honestly", r.status_code == 502,
+      r.status_code)
+with main.app.app_context():
+    check("10-10 and the previous list is not destroyed",
+          len(_mm10.load_user_selected_pairs("siguser")) == 4,
+          _mm10.load_user_selected_pairs("siguser"))
+
+anon10 = main.app.test_client()
+check("10-11 unauthenticated pair building is blocked",
+      anon10.post("/api/live-monitor/signal-settings/pairs/load",
+                  json={}).status_code in (302, 401))
+
 print(f"\n{'='*60}")
 print(f"  TOTAL: {_pass+_fail}   PASS: {_pass}   FAIL: {_fail}")
 print(f"{'='*60}")
