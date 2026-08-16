@@ -478,6 +478,63 @@ with main.app.app_context():
 check("8-12 falls back to the environment when no user is opted in",
       pace["source"] == "environment", pace)
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 9 — the pair universe survives a restart")
+# ══════════════════════════════════════════════════════════════════════════════
+# It used to live only in /tmp, which containers wipe on every restart. The
+# universe then silently emptied and the funnel had nothing to scan until the
+# browser happened to resync — which never happens with the browser closed.
+
+import main as _mm9                                                   # noqa: E402
+
+with main.app.app_context():
+    _mm9.save_user_selected_pairs("siguser", ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+    from models import LiveMonitorSignalSettings as _S9
+    _row9 = _S9.query.filter_by(user_id=UID).first()
+check("9-1 the universe is written to the database",
+      _row9 is not None and _row9.selected_pairs_json is not None,
+      _row9 and _row9.selected_pairs_json)
+check("9-2 all pairs stored",
+      json.loads(_row9.selected_pairs_json) == ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+      _row9.selected_pairs_json)
+
+# Simulate the restart: /tmp gone, database intact.
+import os as _os9
+try:
+    _os9.remove(_mm9._sel_pairs_file("siguser"))
+except Exception:
+    pass
+with main.app.app_context():
+    survived = _mm9.load_user_selected_pairs("siguser")
+check("9-3 the universe survives losing /tmp",
+      survived == ["BTCUSDT", "ETHUSDT", "SOLUSDT"], survived)
+
+with main.app.app_context():
+    _mm9.save_user_universe_config("siguser", {
+        "source": "movers",
+        "cfg": {"dir": "gainers", "gainers": 200, "losers": 0},
+    })
+    _row9 = _S9.query.filter_by(user_id=UID).first()
+check("9-4 how the list was built is stored in the database too",
+      _row9.universe_source == "movers", _row9.universe_source)
+
+try:
+    _os9.remove(_mm9._universe_cfg_file("siguser"))
+except Exception:
+    pass
+with main.app.app_context():
+    cfg9 = _mm9.load_user_universe_config("siguser")
+check("9-5 the build settings survive losing /tmp too",
+      cfg9.get("source") == "movers" and
+      (cfg9.get("cfg") or {}).get("gainers") == 200, cfg9)
+
+# A user with nothing stored anywhere must not error.
+with main.app.app_context():
+    check("9-6 an unknown user returns empty rather than failing",
+          _mm9.load_user_selected_pairs("nobody_at_all") == [],
+          _mm9.load_user_selected_pairs("nobody_at_all"))
+
 print(f"\n{'='*60}")
 print(f"  TOTAL: {_pass+_fail}   PASS: {_pass}   FAIL: {_fail}")
 print(f"{'='*60}")

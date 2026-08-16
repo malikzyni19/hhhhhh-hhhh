@@ -1551,6 +1551,14 @@ class LiveMonitorSignalSettings(db.Model):
     scan_pairs_per_cycle = db.Column(db.Integer, nullable=False, default=30,
                                      server_default="30")
 
+    # ── Selected Pairs universe ──────────────────────────────────────────────
+    # The Scanner's chosen pairs, and how that list was built. Previously kept
+    # in /tmp, which containers wipe on every restart — so the list silently
+    # emptied and the funnel had nothing to scan until the browser resynced.
+    selected_pairs_json  = db.Column(db.Text, nullable=True)
+    universe_source      = db.Column(db.String(20), nullable=True)
+    universe_cfg_json    = db.Column(db.Text, nullable=True)
+
     created_at = db.Column(db.DateTime,
                            default=lambda: datetime.now(timezone.utc),
                            nullable=False)

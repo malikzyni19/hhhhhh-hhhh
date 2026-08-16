@@ -339,7 +339,7 @@ def _universe_cfg_file(username: str) -> str:
     return f"/tmp/zyni_unicfg_{safe}.json"
 
 
-def load_user_universe_config(username: str) -> dict:
+def load_user_universe_config(username: str) -> dict:  # noqa: C901
     """How this user's Selected Pairs universe was built.
 
     {"source": "movers"|"manual", "cfg": {...}}. The server can only rebuild
@@ -349,6 +349,19 @@ def load_user_universe_config(username: str) -> dict:
 
     "manual" means the list was hand-picked, so it must be left alone.
     """
+    try:
+        row = _sel_pairs_settings_row(username)
+        if row is not None and row.universe_source:
+            cfg = {}
+            if row.universe_cfg_json:
+                try:
+                    cfg = json.loads(row.universe_cfg_json) or {}
+                except Exception:
+                    cfg = {}
+            return {"source": row.universe_source, "cfg": cfg}
+    except Exception as e:
+        print(f"[UNICFG-LOAD] db read failed for {username}: {e}")
+
     try:
         with open(_universe_cfg_file(username), "r") as f:
             data = json.load(f)
@@ -380,19 +393,60 @@ def save_user_universe_config(username: str, descriptor: dict) -> None:
                 "exchange":       str(raw.get("exchange") or "binance").lower(),
                 "market":         str(raw.get("market") or "perpetual").lower(),
             }
+        try:
+            from models import db as _dbu, User as _Uu
+            from live_monitor.signal_settings import get_or_create_signal_settings
+            _user = _Uu.query.filter_by(username=username).first()
+            if _user:
+                _row = get_or_create_signal_settings(_user.id)
+                if _row is not None:
+                    _row.universe_source   = src
+                    _row.universe_cfg_json = json.dumps(cfg)
+                    _dbu.session.commit()
+        except Exception as _de:
+            try:
+                from models import db as _dbu2
+                _dbu2.session.rollback()
+            except Exception:
+                pass
+            print(f"[UNICFG-SAVE] db write failed for {username}: {_de}")
+
         with open(_universe_cfg_file(username), "w") as f:
             json.dump({"source": src, "cfg": cfg}, f)
     except Exception as e:
         print(f"[UNICFG-SAVE] Error for {username}: {e}")
 
 
+def _sel_pairs_settings_row(username: str):
+    """The signal-settings row for a username, or None."""
+    try:
+        from models import User, LiveMonitorSignalSettings as _S
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            return None
+        return _S.query.filter_by(user_id=user.id).first()
+    except Exception:
+        return None
+
+
 def load_user_selected_pairs(username: str) -> List[str]:
     """The user's full Selected Pairs universe.
 
-    Falls back to the 10-pair watchlist for accounts that have not re-synced
-    since this store was added, so the feature works immediately rather than
-    appearing empty until the user touches the Scanner again.
+    Read order: the database first, then the legacy /tmp file, then the
+    10-pair live-price watchlist. Containers wipe /tmp on restart, so a
+    file-only store silently emptied the universe and left the funnel with
+    nothing to scan until the browser happened to resync.
     """
+    try:
+        row = _sel_pairs_settings_row(username)
+        if row is not None and row.selected_pairs_json:
+            data = json.loads(row.selected_pairs_json)
+            out = [str(p).strip().upper() for p in data if str(p).strip()]
+            if out:
+                return out
+    except Exception as e:
+        print(f"[SELPAIRS-LOAD] db read failed for {username}: {e}")
+
     try:
         with open(_sel_pairs_file(username), "r") as f:
             data = json.load(f)
@@ -405,13 +459,32 @@ def load_user_selected_pairs(username: str) -> List[str]:
 
 
 def save_user_selected_pairs(username: str, pairs: List[str]) -> None:
+    """Store the universe durably, with the file kept as a mirror."""
+    clean = [str(p).strip().upper() for p in pairs if str(p).strip()]
+    clean = [p for p in clean if p.endswith("USDT")][:_SELECTED_PAIRS_MAX]
+
     try:
-        clean = [str(p).strip().upper() for p in pairs if str(p).strip()]
-        clean = [p for p in clean if p.endswith("USDT")][:_SELECTED_PAIRS_MAX]
+        from models import db as _db, User, LiveMonitorSignalSettings as _S
+        user = User.query.filter_by(username=username).first()
+        if user:
+            from live_monitor.signal_settings import get_or_create_signal_settings
+            row = get_or_create_signal_settings(user.id)
+            if row is not None:
+                row.selected_pairs_json = json.dumps(clean)
+                _db.session.commit()
+    except Exception as e:
+        try:
+            from models import db as _db2
+            _db2.session.rollback()
+        except Exception:
+            pass
+        print(f"[SELPAIRS-SAVE] db write failed for {username}: {e}")
+
+    try:
         with open(_sel_pairs_file(username), "w") as f:
             json.dump(clean, f)
     except Exception as e:
-        print(f"[SELPAIRS-SAVE] Error for {username}: {e}")
+        print(f"[SELPAIRS-SAVE] file mirror failed for {username}: {e}")
 
 # ============================================================
 # EMAIL CONFIG — Login Notifications
@@ -797,6 +870,12 @@ def _auto_migrate():
                     "scan_interval_sec INTEGER NOT NULL DEFAULT 900",
                     "ALTER TABLE live_monitor_signal_settings ADD COLUMN IF NOT EXISTS "
                     "scan_pairs_per_cycle INTEGER NOT NULL DEFAULT 30",
+                    "ALTER TABLE live_monitor_signal_settings ADD COLUMN IF NOT EXISTS "
+                    "selected_pairs_json TEXT",
+                    "ALTER TABLE live_monitor_signal_settings ADD COLUMN IF NOT EXISTS "
+                    "universe_source VARCHAR(20)",
+                    "ALTER TABLE live_monitor_signal_settings ADD COLUMN IF NOT EXISTS "
+                    "universe_cfg_json TEXT",
                 ]:
                     try:
                         conn.execute(text(_stmt_sig))
