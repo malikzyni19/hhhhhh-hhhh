@@ -274,6 +274,80 @@ anon = main.app.test_client()
 check("7-6 unauthenticated promotion run blocked",
       anon.post("/api/live-monitor/signal-promotion/run").status_code in (302, 401))
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 8 — only setups worth the collection cost get watched")
+# ══════════════════════════════════════════════════════════════════════════════
+# Watching a pair starts per-minute CVD candles, open-interest sampling, spot
+# flow and order-flow snapshots, and keeps doing so for as long as it stays
+# watched. A screen full of weak "this pair is compressed" rows spends that
+# budget on setups nobody could trade.
+
+from live_monitor.signal_promoter import min_promotion_strength      # noqa: E402
+from live_monitor.signal_intake import adapt_compressed, adapt_bias  # noqa: E402
+from live_monitor.signal_confluence import build_confluence_groups   # noqa: E402
+from live_monitor.signal_intake import record_candidates as _rec8    # noqa: E402
+from datetime import datetime as _dt8, timezone as _tz8
+
+NOW8 = _dt8(2026, 8, 13, 12, 0, 0, tzinfo=_tz8.utc)
+
+check("8-1 a quality floor exists", min_promotion_strength() > 0,
+      min_promotion_strength())
+
+with main.app.app_context():
+    C.query.delete(); LMI.query.delete(); db.session.commit()
+
+    # A compression-only pair: a market condition, not a setup. No direction,
+    # no thesis, nothing to alert on.
+    _rec8(adapt_compressed({"symbol": "SQUEEZEUSDT", "timeframe": "1h",
+                            "boxHigh": 101, "boxLow": 99,
+                            "compressionScore": 90}, now=NOW8))
+    groups = build_confluence_groups(window_hours=12, now=NOW8)
+
+check("8-2 a compression-only pair produces no group at all",
+      not any(g["symbol"] == "SQUEEZEUSDT" for g in groups),
+      [g["symbol"] for g in groups])
+
+with main.app.app_context():
+    # The same squeeze alongside a real directional setup MUST still count —
+    # it is supporting evidence, it just cannot stand alone.
+    _rec8(adapt_bias({"symbol": "SQUEEZEUSDT", "timeframe": "4h",
+                      "bias": "bullish", "score": 85}, now=NOW8))
+    groups = build_confluence_groups(window_hours=12, now=NOW8)
+
+g = next((x for x in groups if x["symbol"] == "SQUEEZEUSDT"), None)
+check("8-3 with a directional setup the pair now forms a group",
+      g is not None and g["direction"] == "long", g)
+check("8-4 and the squeeze still counts as supporting evidence",
+      g and "compressed" in (g.get("modules") or []), g and g.get("modules"))
+
+# The floor itself.
+with main.app.app_context():
+    LMI.query.delete(); db.session.commit()
+    st = get_or_create_signal_settings(UID)
+    st.enabled = True
+    st.coin_scope = "top_volume"
+    db.session.commit()
+
+weak   = grp("WEAKUSDT", strength=min_promotion_strength() - 20)
+strong = grp("STRONGUSDT", strength=min_promotion_strength() + 20)
+
+with patch("live_monitor.signal_confluence.build_confluence_groups",
+           return_value=[weak, strong]), \
+     patch("live_monitor.signal_confluence.filter_groups_for_settings",
+           return_value=[weak, strong]):
+    with main.app.app_context():
+        res = run_promotion_cycle(UID, now=NOW8)
+        watched = {r.symbol for r in LMI.query.filter_by(user_id=UID,
+                                                         is_active=True).all()}
+
+check("8-5 a weak setup is not watched", "WEAKUSDT" not in watched, watched)
+check("8-6 a strong setup is watched", "STRONGUSDT" in watched, watched)
+check("8-7 the rejection is reported, not silent",
+      res.get("below_quality_floor") == 1, res)
+check("8-8 the floor in force is reported",
+      res.get("min_strength") == min_promotion_strength(), res)
+
 _NOOP.stop()
 print(f"\n{'='*60}")
 print(f"  TOTAL: {_pass+_fail}   PASS: {_pass}   FAIL: {_fail}")

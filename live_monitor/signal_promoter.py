@@ -33,6 +33,20 @@ def max_watched_coins() -> int:
         return 20
 
 
+def min_promotion_strength() -> int:
+    """Quality floor a setup must clear before it is worth watching.
+
+    Watching is not free: every promoted pair starts per-minute CVD candles,
+    open-interest sampling, spot flow and order-flow snapshots, and keeps
+    doing so for as long as it stays watched. Spending that on a 35%-strength
+    setup is spending it on something nobody would trade.
+    """
+    try:
+        return max(0, min(100, int(os.environ.get("ZYNI_SIG_MIN_STRENGTH", "55"))))
+    except (TypeError, ValueError):
+        return 55
+
+
 def min_watch_minutes() -> int:
     """Shortest time a promoted coin stays watched.
 
@@ -286,9 +300,18 @@ def run_promotion_cycle(user_id: int, now=None) -> dict:
 
     # Strongest first, then trimmed to the ceiling — everything below the line
     # is simply not watched this cycle.
-    matched.sort(key=lambda g: (g.get("module_count", 0), g.get("strength", 0)),
-                 reverse=True)
-    top = matched[:max_watched_coins()]
+    # Quality gate before the ceiling, so the limited watch slots go to setups
+    # worth the collection cost rather than to whatever ranked highest among a
+    # weak field.
+    floor = min_promotion_strength()
+    strong = [g for g in matched
+              if int(g.get("strength") or 0) >= floor
+              and g.get("direction") in ("long", "short")]
+    rejected = len(matched) - len(strong)
+
+    strong.sort(key=lambda g: (g.get("module_count", 0), g.get("strength", 0)),
+                reverse=True)
+    top = strong[:max_watched_coins()]
 
     promoted = promote_groups(user_id, top, now=now)
     demoted  = demote_stale_watches(user_id, top, now=now)
@@ -298,6 +321,8 @@ def run_promotion_cycle(user_id: int, now=None) -> dict:
         "candidates_expired": expired,
         "groups_found":     len(groups),
         "groups_matched":   len(matched),
+        "below_quality_floor": rejected,
+        "min_strength":     floor,
         "groups_watched":   len(top),
         "promote":          promoted,
         "demote":           demoted,

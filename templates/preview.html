@@ -877,6 +877,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .lm-manual-msg.ok{color:var(--green-2,#22d3ee)}
 .lm-manual-msg.err{color:var(--red-2,#ef4444)}
 .lm-body{display:grid;grid-template-columns:290px 1fr;flex:1;min-height:0;overflow:hidden;height:0}
+.lm-body.lm-nolist{grid-template-columns:1fr}
 #lmDhWrap{margin-top:12px}
 .lm-left{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:var(--bg-panel)}
 .lm-left-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
@@ -6657,6 +6658,11 @@ window._zyniJustLoggedIn = {{ just_logged_in|tojson }};
        column of clutter next to them. */
     var left=document.querySelector('.lm-left');
     if(left) left.style.display=(ws==='setups')?'':'none';
+    /* The grid reserves a fixed first column for that list. Without collapsing
+       it, the workspace pane drops INTO the narrow column and renders as a
+       thin strip beside a wide empty gap. */
+    var lbody=document.querySelector('.lm-body');
+    if(lbody) lbody.classList.toggle('lm-nolist', ws!=='setups');
     // Sync sidebar active state
     var aside=document.querySelector('.side');
     if(aside){

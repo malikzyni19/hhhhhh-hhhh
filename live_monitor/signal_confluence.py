@@ -199,20 +199,19 @@ def build_confluence_groups(window_hours: int = 12, min_modules: int = 1,
                 **info,
             })
 
-        # Squeeze-only symbols still surface, but can never outrank a
-        # directional group because neutral weight is halved in scoring.
-        if not made_directional and neutrals:
-            info = score_group(neutrals)
-            if info.get("module_count", 0) >= min_modules:
-                groups.append({
-                    "symbol":    symbol,
-                    "direction": "neutral",
-                    "exchange":  neutrals[0].exchange,
-                    "market":    neutrals[0].market,
-                    "detected_price": neutrals[0].detected_price,
-                    "candidate_ids":  [c.id for c in neutrals],
-                    **info,
-                })
+        # A squeeze on its own is NOT a setup. "This pair is compressed" says
+        # nothing about direction, entry or invalidation — it is a market
+        # condition, and acting on it means watching a coin with no thesis.
+        #
+        # Promoting those was costing real money: every watched pair starts
+        # per-minute CVD candles, open-interest sampling, spot flow and
+        # order-flow snapshots. A screen full of 35%-score "compressed" rows
+        # spends that budget on setups nobody could trade.
+        #
+        # Neutral finds are kept as candidates so they still ADD weight to a
+        # directional setup on the same pair — they simply cannot create one.
+        if not made_directional:
+            continue
 
     groups.sort(key=lambda g: (g["module_count"], g["strength"]), reverse=True)
     return groups
