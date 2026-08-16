@@ -11,6 +11,218 @@
   </div>
 {% else %}
 
+{% set eg = info.egress %}
+{% set neon = info.neon or {} %}
+
+<!-- ══ NETWORK TRANSFER ══ -->
+{% if eg %}
+{% set proj = eg.projected_month %}
+{% set quota = (neon.quota_bytes if neon.get('quota_bytes') else 5 * 1024**3) %}
+{% set proj_pct = (proj / quota * 100) if quota else 0 %}
+{% set lvl = 'red' if proj_pct >= 90 else ('amber' if proj_pct >= 60 else 'green') %}
+
+<div class="adm-card" style="border-color:{% if lvl == 'red' %}rgba(248,113,113,.35){% elif lvl == 'amber' %}rgba(245,158,11,.3){% else %}var(--border){% endif %}">
+  <div class="adm-card-header">
+    <div class="adm-card-title">Network Transfer</div>
+    <div style="font-size:10.5px;color:var(--muted)">
+      {% if neon.get('configured') and not neon.get('error') %}
+        Live from the Neon API
+      {% else %}
+        Rows and queries exact · bytes estimated at {{ eg.bytes_per_row }} B/row{% if not eg.calibrated %} (uncalibrated){% endif %} · resets on redeploy
+      {% endif %}
+    </div>
+  </div>
+  <div class="adm-card-body">
+
+    {% if neon.get('configured') and neon.get('used_bytes') is not none and not neon.get('error') %}
+    <!-- Authoritative billing figure -->
+    {% set npct = neon.pct or 0 %}
+    <div style="margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+        <span style="font-size:10px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;font-weight:600">Billing period usage</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:13px;
+                     color:{% if npct >= 90 %}var(--red){% elif npct >= 70 %}var(--amber){% else %}var(--green){% endif %}">
+          {{ neon.used_bytes | bytes_h }}{% if neon.quota_bytes %} / {{ neon.quota_bytes | bytes_h }}{% endif %}
+        </span>
+      </div>
+      <div class="meter" style="height:10px">
+        <div class="meter-fill {% if npct >= 90 %}red{% elif npct >= 70 %}amber{% else %}green{% endif %}"
+             style="width:{{ [npct, 100] | min }}%"></div>
+      </div>
+      {% if npct %}<div style="font-size:10.5px;color:var(--muted);margin-top:6px">{{ npct }}% of quota consumed</div>{% endif %}
+    </div>
+    {% elif neon.get('error') %}
+      <div class="adm-flash warn" style="margin-bottom:16px">
+        <span class="adm-flash-icon">!</span>
+        <span>Neon API unavailable ({{ neon.error }}). Showing in-process measurements below.</span>
+      </div>
+    {% endif %}
+
+    <!-- Measured egress -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px">
+      <div class="tx-tile">
+        <div class="tx-lbl">Current rate</div>
+        <div class="tx-val cyan">{{ eg.bytes_per_sec | bytes_h }}<span class="tx-unit">/s</span></div>
+        <div class="tx-sub">{{ (eg.bytes_per_sec * 3600) | bytes_h }} per hour</div>
+      </div>
+      <div class="tx-tile">
+        <div class="tx-lbl">Last hour</div>
+        <div class="tx-val">{{ eg.per_hour.bytes | bytes_h }}</div>
+        <div class="tx-sub">{{ '{:,}'.format(eg.per_hour.queries) }} queries · {{ '{:,}'.format(eg.per_hour.rows) }} rows</div>
+      </div>
+      <div class="tx-tile">
+        <div class="tx-lbl">Since restart</div>
+        <div class="tx-val">{{ eg.totals.bytes | bytes_h }}</div>
+        <div class="tx-sub">
+          {{ '{:,}'.format(eg.totals.queries) }} queries ·
+          {% set h = eg.uptime_secs // 3600 %}{% set m = (eg.uptime_secs % 3600) // 60 %}
+          up {% if h %}{{ h }}h {% endif %}{{ m }}m
+        </div>
+      </div>
+      <div class="tx-tile" style="border-color:{% if lvl=='red' %}rgba(248,113,113,.35){% elif lvl=='amber' %}rgba(245,158,11,.3){% else %}var(--border){% endif %}">
+        <div class="tx-lbl">Projected / month</div>
+        <div class="tx-val {{ lvl }}">{{ proj | bytes_h }}</div>
+        <div class="tx-sub">{{ proj_pct | round | int }}% of {{ quota | bytes_h }}</div>
+      </div>
+    </div>
+
+    {% if proj_pct >= 90 %}
+      <div class="adm-flash error">
+        <span class="adm-flash-icon">✕</span>
+        <span>At this rate you will exceed the transfer quota this month. The worst offenders are listed below.</span>
+      </div>
+    {% elif proj_pct >= 60 %}
+      <div class="adm-flash warn">
+        <span class="adm-flash-icon">!</span>
+        <span>On track to use {{ proj_pct | round | int }}% of the monthly transfer quota.</span>
+      </div>
+    {% endif %}
+
+    <!-- Per-minute sparkline -->
+    {% if eg.series and eg.series | length > 1 %}
+    {% set maxb = (eg.series | map(attribute='bytes') | max) or 1 %}
+    <div style="margin-bottom:6px">
+      <div style="font-size:10px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;font-weight:600;margin-bottom:9px">
+        Last {{ eg.series | length }} minutes · peak {{ maxb | bytes_h }}/min
+      </div>
+      <div class="spark">
+        {% for p in eg.series %}
+        <div class="spark-bar" style="height:{{ [(p.bytes / maxb * 100), 2] | max }}%"
+             title="{{ p.bytes | bytes_h }} · {{ p.queries }} queries"></div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Who is spending it -->
+<div class="adm-card">
+  <div class="adm-card-header">
+    <div class="adm-card-title">Transfer by Source</div>
+    <div style="font-size:10.5px;color:var(--muted)">Since last restart</div>
+  </div>
+  <div class="adm-table-wrap scroll">
+    <table class="adm-table">
+      <thead>
+        <tr><th>Source</th><th style="text-align:right">Bytes</th><th style="text-align:right">Rows</th>
+            <th style="text-align:right">Queries</th><th style="width:28%">Share</th></tr>
+      </thead>
+      <tbody>
+        {% set smax = (eg.sources | map(attribute='bytes') | max) if eg.sources else 1 %}
+        {% for s in eg.sources %}
+        <tr>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:11.5px;
+                     color:{% if s.source.startswith('ws:') %}var(--amber){% else %}var(--text){% endif %}">
+            {{ s.source }}
+          </td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--cyan)">{{ s.bytes | bytes_h }}</td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--muted)">{{ '{:,}'.format(s.rows) }}</td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--muted)">{{ '{:,}'.format(s.queries) }}</td>
+          <td>
+            <div class="meter">
+              <div class="meter-fill {{ 'red' if s.bytes > smax * 0.6 else ('amber' if s.bytes > smax * 0.25 else 'cyan') }}"
+                   style="width:{{ (s.bytes / smax * 100) | round | int if smax else 0 }}%"></div>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="adm-empty">No queries recorded yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if info.pgstat and info.pgstat.available %}
+{% set ps = info.pgstat %}
+<div class="adm-card">
+  <div class="adm-card-header">
+    <div class="adm-card-title">Server Counters</div>
+    <div style="font-size:10.5px;color:var(--muted)">
+      PostgreSQL totals since stats reset
+      {% if ps.age_secs %}({{ (ps.age_secs / 86400) | round(1) }} days){% endif %}
+    </div>
+  </div>
+  <div class="adm-card-body">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px">
+      <div class="tx-tile">
+        <div class="tx-lbl">Rows returned</div>
+        <div class="tx-val" style="font-size:19px">{{ '{:,}'.format(ps.tup_returned) }}</div>
+        <div class="tx-sub">to clients</div>
+      </div>
+      <div class="tx-tile">
+        <div class="tx-lbl">Disk reads</div>
+        <div class="tx-val" style="font-size:19px">{{ ps.blks_read_bytes | bytes_h }}</div>
+        <div class="tx-sub">{{ '{:,}'.format(ps.blks_read) }} blocks</div>
+      </div>
+      <div class="tx-tile">
+        <div class="tx-lbl">Cache hit rate</div>
+        <div class="tx-val {{ 'green' if (ps.cache_hit_pct or 0) >= 95 else 'amber' }}" style="font-size:19px">
+          {{ ps.cache_hit_pct if ps.cache_hit_pct is not none else '—' }}%
+        </div>
+        <div class="tx-sub">higher is cheaper</div>
+      </div>
+      <div class="tx-tile">
+        <div class="tx-lbl">Transactions</div>
+        <div class="tx-val" style="font-size:19px">{{ '{:,}'.format(ps.xact_commit) }}</div>
+        <div class="tx-sub">committed</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if not neon.get('configured') %}
+<div class="adm-card" style="border-color:rgba(34,211,238,.2)">
+  <div class="adm-card-body">
+    <div style="font-size:12px;color:var(--muted);line-height:1.7">
+      <strong style="color:var(--cyan)">Want the exact billed figure?</strong>
+      The numbers above are measured inside this process — they reset on every redeploy and
+      miss traffic from other workers. Set <code style="color:var(--cyan)">NEON_API_KEY</code> and
+      <code style="color:var(--cyan)">NEON_PROJECT_ID</code> in your environment and this panel will
+      show Neon's own billing counter instead.
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+
+<style>
+.tx-tile{background:#04090f;border:1px solid var(--border);border-radius:9px;padding:14px}
+.tx-lbl{font-size:9.5px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;font-weight:600;margin-bottom:8px}
+.tx-val{font-family:'JetBrains Mono',monospace;font-size:21px;font-weight:700;color:var(--text);line-height:1.15}
+.tx-val.cyan{color:var(--cyan)} .tx-val.green{color:var(--green)}
+.tx-val.amber{color:var(--amber)} .tx-val.red{color:var(--red)}
+.tx-unit{font-size:12px;color:var(--muted);font-weight:500;margin-left:2px}
+.tx-sub{font-size:10.5px;color:var(--muted);margin-top:6px}
+.spark{display:flex;align-items:flex-end;gap:1px;height:52px;background:#04090f;
+       border:1px solid var(--border);border-radius:7px;padding:6px}
+.spark-bar{flex:1;min-width:1px;background:linear-gradient(180deg,var(--cyan),rgba(34,211,238,.25));
+           border-radius:1px 1px 0 0;transition:opacity .15s}
+.spark-bar:hover{opacity:.6}
+</style>
+
 <div class="adm-stats-grid">
   <div class="adm-stat-card cyan">
     <div class="adm-stat-label">Database Size</div>

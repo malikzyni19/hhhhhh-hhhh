@@ -3895,6 +3895,18 @@ def sys_database():
     except Exception as e:
         print(f"[ADMIN-DB] cache introspection error: {e}")
 
+    # ── Network transfer ──
+    # Storage is flat; egress is what exhausts the hosting quota, so this is
+    # the section that actually predicts an outage.
+    try:
+        import main as _m
+        info["egress"]  = _m._egress_snapshot()
+        info["pgstat"]  = _m._pg_stat_snapshot()
+        info["neon"]    = _m._neon_consumption()
+    except Exception as e:
+        print(f"[ADMIN-DB] egress error: {e}")
+        info["egress"] = None
+
     return render_template("admin/system/database.html", info=info)
 
 

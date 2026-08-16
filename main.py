@@ -77,6 +77,304 @@ from security import (
 )
 
 db.init_app(app)
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DATABASE EGRESS METER
+#
+# Neon bills on data transfer, not storage. Storage stays flat at ~90 MB while
+# egress is what actually exhausts the monthly quota, so this meters bytes
+# leaving the database and attributes them to whichever loop or request caused
+# them. Everything is in-process and lock-guarded; nothing is written to the DB
+# (a meter that wrote rows would add to the very number it reports).
+# ═════════════════════════════════════════════════════════════════════════════
+
+_egress_lock = threading.Lock()
+_EGRESS_BUCKET_SECS = 60
+_EGRESS_KEEP_BUCKETS = 1440          # 24 h of one-minute buckets
+
+_egress = {
+    "since":     time.time(),
+    "queries":   0,
+    "rows":      0,
+    "bytes":     0,
+    "by_source": {},                 # source -> {queries, rows, bytes}
+    "buckets":   deque(maxlen=_EGRESS_KEEP_BUCKETS),   # [{ts, queries, rows, bytes}]
+}
+
+
+def _egress_source() -> str:
+    """Attribute the current query to a loop or to HTTP traffic."""
+    name = threading.current_thread().name or "unknown"
+    n = name.lower()
+    for frag, label in (
+        ("lm-ws", "ws:binance-markprice"), ("lm-liq", "ws:liquidations"),
+        ("lm-delta", "ws:delta"),          ("mx-bybit", "ws:bybit"),
+        ("mx-okx", "ws:okx"),              ("mx-mexc", "ws:mexc"),
+        ("autoresolver", "auto-resolver"), ("bias", "bias-candles"),
+        ("orderflow", "orderflow"),        ("refresh", "auto-refresh"),
+        ("learning", "learning-review"),
+    ):
+        if frag in n:
+            return label
+    try:
+        from flask import has_request_context
+        if has_request_context():
+            path = (request.path or "/")
+            if path.startswith("/admin"):
+                return "http:admin"
+            if path.startswith("/api/live-monitor"):
+                return "http:live-monitor"
+            if path.startswith("/api/"):
+                return "http:api"
+            return "http:page"
+    except Exception:
+        pass
+    return f"thread:{name}"
+
+
+def _egress_record(rows: int, nbytes: int) -> None:
+    """Add one query's result volume to the meter."""
+    now = time.time()
+    src = _egress_source()
+    slot = int(now // _EGRESS_BUCKET_SECS) * _EGRESS_BUCKET_SECS
+    with _egress_lock:
+        _egress["queries"] += 1
+        _egress["rows"]    += rows
+        _egress["bytes"]   += nbytes
+
+        s = _egress["by_source"].setdefault(src, {"queries": 0, "rows": 0, "bytes": 0})
+        s["queries"] += 1
+        s["rows"]    += rows
+        s["bytes"]   += nbytes
+
+        b = _egress["buckets"]
+        if b and b[-1]["ts"] == slot:
+            b[-1]["queries"] += 1
+            b[-1]["rows"]    += rows
+            b[-1]["bytes"]   += nbytes
+        else:
+            b.append({"ts": slot, "queries": 1, "rows": rows, "bytes": nbytes})
+
+
+# Average bytes per returned row. Calibrated at runtime from real table sizes
+# (see _egress_calibrate); the default is a conservative starting point used
+# until the first calibration succeeds.
+_EGRESS_BYTES_PER_ROW = {"value": 120.0, "calibrated": False}
+
+
+def _egress_estimate_bytes(rows: int, ncols: int) -> int:
+    """Estimate wire bytes for a result set.
+
+    Exact byte accounting would require wrapping the DBAPI cursor, which is a C
+    type that rejects attribute assignment, so this scales the measured row
+    count by a calibrated average row width. Row and query counts are exact;
+    only the byte figure is an estimate.
+    """
+    if rows <= 0:
+        return 0
+    per_row = _EGRESS_BYTES_PER_ROW["value"]
+    # Narrow projections move far less than a full row.
+    if ncols and ncols <= 3:
+        per_row = min(per_row, 24.0 * ncols)
+    return int(rows * per_row)
+
+
+def _install_egress_meter():
+    """Count every result set the database hands back.
+
+    psycopg2 buffers the whole result during execute(), so cursor.rowcount is
+    already correct for SELECT by the time this fires — which is what makes
+    row counts exact in production.
+    """
+    from sqlalchemy import event
+    from sqlalchemy.engine import Engine
+
+    @event.listens_for(Engine, "after_cursor_execute")
+    def _after_exec(conn, cursor, statement, parameters, context, executemany):
+        try:
+            rc = cursor.rowcount
+            desc = cursor.description
+        except Exception:
+            return
+
+        rows = rc if isinstance(rc, int) and rc > 0 else 0
+
+        if desc is None:
+            # DML — only the affected-row count comes back.
+            _egress_record(0, rows * 8)
+            return
+
+        _egress_record(rows, _egress_estimate_bytes(rows, len(desc)))
+
+
+try:
+    _install_egress_meter()
+except Exception as _me:
+    print(f"[EGRESS] meter install failed: {_me}")
+
+
+def _egress_calibrate():
+    """Derive average bytes-per-row from real table sizes.
+
+    Uses total heap bytes over total live rows across the public schema, which
+    tracks this database's actual row widths far better than a fixed constant.
+    """
+    try:
+        from sqlalchemy import text
+        with app.app_context():
+            # Small tables are excluded: every relation carries a fixed
+            # page/FSM floor of tens of kilobytes, so a 3-row lookup table
+            # reports thousands of bytes per row and drags the average far
+            # above what the busy tables actually cost. Step the threshold
+            # down so a small or fresh database still calibrates.
+            row = None
+            for floor in (500, 50, 0):
+                row = db.session.execute(text("""
+                    SELECT SUM(pg_table_size(c.oid))::bigint      AS total_bytes,
+                           SUM(GREATEST(c.reltuples, 0))::bigint  AS total_rows
+                      FROM pg_class c
+                      JOIN pg_namespace n ON n.oid = c.relnamespace
+                     WHERE c.relkind = 'r' AND n.nspname = 'public'
+                       AND c.reltuples >= :floor
+                """), {"floor": floor}).first()
+                if row and row.total_rows and row.total_rows > 0:
+                    break
+            if row and row.total_rows and row.total_rows > 0:
+                per_row = float(row.total_bytes or 0) / float(row.total_rows)
+                # Clamp to a sane band so one skewed table cannot distort it.
+                per_row = max(24.0, min(4096.0, per_row))
+                _EGRESS_BYTES_PER_ROW["value"] = per_row
+                _EGRESS_BYTES_PER_ROW["calibrated"] = True
+                print(f"[EGRESS] calibrated to {per_row:.0f} bytes/row "
+                      f"(floor {floor} rows)")
+    except Exception as e:
+        print(f"[EGRESS] calibration skipped: {e}")
+
+
+def _egress_snapshot() -> dict:
+    """Totals, rates and a projection for the Database Usage page."""
+    now = time.time()
+    with _egress_lock:
+        since    = _egress["since"]
+        totals   = {k: _egress[k] for k in ("queries", "rows", "bytes")}
+        sources  = {k: dict(v) for k, v in _egress["by_source"].items()}
+        buckets  = list(_egress["buckets"])
+
+    uptime = max(1.0, now - since)
+
+    def window(secs):
+        cut = now - secs
+        sel = [b for b in buckets if b["ts"] >= cut]
+        return {
+            "bytes":   sum(b["bytes"] for b in sel),
+            "rows":    sum(b["rows"] for b in sel),
+            "queries": sum(b["queries"] for b in sel),
+            "minutes": max(1, len(sel)),
+        }
+
+    last_hour = window(3600)
+    last_day  = window(86400)
+
+    # Project from the longest window with real data, falling back to uptime.
+    if last_day["bytes"] and len(buckets) >= 60:
+        per_sec = last_day["bytes"] / max(1.0, min(86400.0, uptime))
+    else:
+        per_sec = totals["bytes"] / uptime
+
+    return {
+        "uptime_secs":   int(uptime),
+        "bytes_per_row": round(_EGRESS_BYTES_PER_ROW["value"]),
+        "calibrated":    _EGRESS_BYTES_PER_ROW["calibrated"],
+        "totals":        totals,
+        "per_hour":      last_hour,
+        "per_day":       last_day,
+        "bytes_per_sec": per_sec,
+        "projected_month": per_sec * 86400 * 30,
+        "sources": sorted(
+            [{"source": k, **v} for k, v in sources.items()],
+            key=lambda x: -x["bytes"]),
+        "series": [
+            {"ts": b["ts"], "bytes": b["bytes"], "queries": b["queries"]}
+            for b in buckets[-120:]
+        ],
+    }
+
+
+def _pg_stat_snapshot() -> dict:
+    """Server-side counters from pg_stat_database — a cross-check on the meter.
+
+    tup_returned is rows handed back to clients, which is the closest thing
+    PostgreSQL exposes to billed egress. Counters are cumulative since the last
+    stats reset, so the caller compares successive samples for a rate.
+    """
+    out = {"available": False}
+    try:
+        from sqlalchemy import text
+        with app.app_context():
+            row = db.session.execute(text("""
+                SELECT tup_returned, tup_fetched, blks_read, blks_hit,
+                       xact_commit, stats_reset,
+                       EXTRACT(EPOCH FROM (now() - stats_reset)) AS age_secs
+                  FROM pg_stat_database
+                 WHERE datname = current_database()
+            """)).first()
+            if row:
+                out = {
+                    "available":    True,
+                    "tup_returned": int(row.tup_returned or 0),
+                    "tup_fetched":  int(row.tup_fetched or 0),
+                    "blks_read":    int(row.blks_read or 0),
+                    "blks_hit":     int(row.blks_hit or 0),
+                    "xact_commit":  int(row.xact_commit or 0),
+                    "age_secs":     float(row.age_secs or 0),
+                }
+                # Blocks read from disk are 8 KB each — a floor on bytes moved.
+                out["blks_read_bytes"] = out["blks_read"] * 8192
+                total_blks = out["blks_read"] + out["blks_hit"]
+                out["cache_hit_pct"] = (
+                    round(out["blks_hit"] / total_blks * 100, 1) if total_blks else None)
+    except Exception as e:
+        out["error"] = str(e)
+    return out
+
+
+def _neon_consumption() -> dict:
+    """Authoritative transfer figure from the Neon API, when configured.
+
+    Set NEON_API_KEY and NEON_PROJECT_ID to enable. Without them the admin page
+    falls back to the in-process meter, which is an estimate.
+    """
+    key  = os.environ.get("NEON_API_KEY", "").strip()
+    proj = os.environ.get("NEON_PROJECT_ID", "").strip()
+    if not key or not proj:
+        return {"configured": False}
+    try:
+        r = req.get(
+            f"https://console.neon.tech/api/v2/projects/{proj}",
+            headers={"Authorization": f"Bearer {key}",
+                     "Accept": "application/json"},
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return {"configured": True, "error": f"HTTP {r.status_code}"}
+        p = (r.json() or {}).get("project", {}) or {}
+        used  = int(p.get("data_transfer_bytes") or 0)
+        quota = ((p.get("quota") or {}).get("data_transfer_bytes")
+                 or (p.get("settings") or {}).get("quota", {}).get("data_transfer_bytes")
+                 or 0)
+        return {
+            "configured":     True,
+            "used_bytes":     used,
+            "quota_bytes":    int(quota or 0),
+            "pct":            round(used / quota * 100, 1) if quota else None,
+            "period_start":   p.get("consumption_period_start"),
+            "period_end":     p.get("consumption_period_end"),
+            "compute_secs":   p.get("compute_time_seconds"),
+        }
+    except Exception as e:
+        return {"configured": True, "error": str(e)}
+
+
 _login_manager = LoginManager()
 _login_manager.init_app(app)
 _login_manager.login_view = "admin.login"
@@ -86,6 +384,20 @@ def _load_user(user_id):
     return _DBUser.query.get(int(user_id))
 
 app.register_blueprint(admin_bp)
+
+@app.template_filter("bytes_h")
+def _bytes_h(n):
+    """Human-readable byte size for admin templates."""
+    try:
+        n = float(n or 0)
+    except (TypeError, ValueError):
+        return "—"
+    for unit, step in (("B", 1024), ("kB", 1024), ("MB", 1024), ("GB", 1024), ("TB", None)):
+        if step is None or abs(n) < step:
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.2f} {unit}"
+        n /= step
+    return f"{n:.2f} TB"
+
 
 @app.template_filter("time_ago")
 def _time_ago(dt):
@@ -903,6 +1215,12 @@ def _auto_migrate():
             _seed_tier_plans()
         except Exception as exc:
             print(f"[MIGRATE] tier seed warning: {exc}")
+
+        # Calibrate the egress meter against this database's real row widths.
+        try:
+            _egress_calibrate()
+        except Exception as exc:
+            print(f"[MIGRATE] egress calibration warning: {exc}")
 
 
 _TIER_SEED = {
